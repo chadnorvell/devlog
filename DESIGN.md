@@ -80,6 +80,11 @@ Some commands do not require a running server:
 - `devlog gen`: Reads raw data files and invokes the configured AI
   summarizer. Does not contact the server.
 
+- `devlog watch` / `devlog unwatch`: If the server is running, these send an
+  IPC command so the change takes effect immediately. If the server is not
+  running, they modify `state.json` directly; the server will pick up the
+  change on next startup.
+
 ### 2.2 IPC: Unix domain socket
 
 The server listens on a Unix domain socket at:
@@ -278,7 +283,7 @@ command (see section 6.3). This allows watching two repos that have the same
 directory basename — e.g., `devlog watch /home/chad/work/foo --name work-foo`.
 
 **Collision handling**: If a `watch` command would result in two watched repos
-having the same project name (whether default or overridden), the server must
+having the same project name (whether default or overridden), the command must
 reject it with an error message identifying the conflict. Project names must be
 unique across all watched repos.
 
@@ -576,7 +581,7 @@ Generate a summary for `<date>` (default: today).
 
 ### 6.3 `devlog watch [<path>] [--name <name>]`
 
-Tell the server to start watching a git repository.
+Start watching a git repository.
 
 **Precondition**: If `<path>` is not provided, the command must be invoked
 from within a git repository (use its root). If not, print an error and exit 1.
@@ -593,27 +598,47 @@ exit 1.
 **Behavior**:
 
 1. Resolve the absolute path to the repo root.
-2. Send a `watch` command to the server via the Unix socket, including the
-   `name` if `--name` was provided.
-3. If the server is not running, print "Error: devlog server is not running.
-   Start it with `devlog start`." and exit 1.
-4. Print the server's response. If the repo was already watched, indicate
-   that. Always print the full list of currently watched repos (showing both
-   path and project name).
+2. Determine the project name: use `--name` if provided, otherwise use the
+   basename of the repo root.
+3. Try to send a `watch` command to the server via the Unix socket.
+4. If the server is running, print the server's response. If the repo was
+   already watched, indicate that. Always print the full list of currently
+   watched repos (showing both path and project name).
+5. If the server is not running (socket doesn't exist or connection refused),
+   fall back to modifying `state.json` directly:
+   a. Read the current `state.json` (or start with an empty watch list if
+      the file doesn't exist).
+   b. Check for name collisions against existing entries (see section 4.1).
+      If a collision is found, print an error and exit 1.
+   c. If the repo path is already in the watch list, indicate that.
+      Otherwise, add the entry and write `state.json` atomically.
+   d. Print the updated watch list and note that the server is not running,
+      so snapshot collection will begin when it starts.
+
+**Does not require a running server.**
 
 ### 6.4 `devlog unwatch [<path>]`
 
-Tell the server to stop watching a git repository.
+Stop watching a git repository.
 
 **Precondition**: Same resolution logic as `watch`.
 
 **Behavior**:
 
 1. Resolve the absolute path to the repo root.
-2. Send an `unwatch` command to the server via the Unix socket.
-3. If the server is not running, print an error and exit 1.
-4. Print the server's response. If the repo was already not being watched,
-   indicate that. Always print the full list of currently watched repos.
+2. Try to send an `unwatch` command to the server via the Unix socket.
+3. If the server is running, print the server's response. If the repo was
+   already not being watched, indicate that. Always print the full list of
+   currently watched repos.
+4. If the server is not running (socket doesn't exist or connection refused),
+   fall back to modifying `state.json` directly:
+   a. Read the current `state.json`. If the file doesn't exist, the watch
+      list is empty — print that the repo is not being watched and exit 0.
+   b. If the repo path is not in the watch list, indicate that.
+      Otherwise, remove the entry and write `state.json` atomically.
+   c. Print the updated watch list.
+
+**Does not require a running server.**
 
 ### 6.5 `devlog start`
 
@@ -694,7 +719,7 @@ Print the current server status.
 
 | Condition | Behavior |
 |-----------|----------|
-| Server not running when required | Print a clear error message directing user to run `devlog start`. Exit 1. |
+| Server not running for `stop` | Print "devlog server is not running" and exit 0. |
 | Not in a git repo when required | Print "Error: not in a git repository" to stderr. Exit 1. |
 | Invalid date format | Print "Error: invalid date format, expected YYYY-MM-DD" to stderr. Exit 1. |
 | `gen_cmd` not on PATH for `gen` | Print error with instructions. Exit 1. |

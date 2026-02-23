@@ -173,8 +173,8 @@ func cmdWatch() {
 	resp, err := ipcSend(IPCRequest{Command: "watch", Args: json.RawMessage(args)})
 	if err != nil {
 		if isServerNotRunning(err) {
-			fmt.Fprintln(os.Stderr, "Error: devlog server is not running. Start it with `devlog start`.")
-			os.Exit(1)
+			watchOffline(repoRoot, *name)
+			return
 		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -186,6 +186,46 @@ func cmdWatch() {
 	}
 
 	printWatchedList(resp.Data)
+}
+
+func watchOffline(repoRoot, nameOverride string) {
+	state, err := loadState()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	projectName := nameOverride
+	if projectName == "" {
+		projectName = filepath.Base(repoRoot)
+	}
+
+	// Check if already watched
+	for _, w := range state.Watched {
+		if w.Path == repoRoot {
+			fmt.Printf("Already watching %s (%s)\n", w.Name, w.Path)
+			printWatchedState(state)
+			fmt.Println("(server is not running; snapshot collection will begin when it starts)")
+			return
+		}
+	}
+
+	// Check for name collision
+	for _, w := range state.Watched {
+		if w.Name == projectName {
+			fmt.Fprintf(os.Stderr, "Error: name conflict: %q is already used by %s\n", projectName, w.Path)
+			os.Exit(1)
+		}
+	}
+
+	state.Watched = append(state.Watched, WatchEntry{Path: repoRoot, Name: projectName})
+	if err := saveState(state); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	printWatchedState(state)
+	fmt.Println("(server is not running; snapshot collection will begin when it starts)")
 }
 
 func cmdUnwatch() {
@@ -214,8 +254,8 @@ func cmdUnwatch() {
 	resp, err := ipcSend(IPCRequest{Command: "unwatch", Args: json.RawMessage(args)})
 	if err != nil {
 		if isServerNotRunning(err) {
-			fmt.Fprintln(os.Stderr, "Error: devlog server is not running. Start it with `devlog start`.")
-			os.Exit(1)
+			unwatchOffline(repoRoot)
+			return
 		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -227,6 +267,38 @@ func cmdUnwatch() {
 	}
 
 	printWatchedList(resp.Data)
+}
+
+func unwatchOffline(repoRoot string) {
+	state, err := loadState()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	found := false
+	var newWatched []WatchEntry
+	for _, w := range state.Watched {
+		if w.Path == repoRoot {
+			found = true
+			continue
+		}
+		newWatched = append(newWatched, w)
+	}
+
+	if !found {
+		fmt.Printf("Not watching %s\n", repoRoot)
+		printWatchedState(state)
+		return
+	}
+
+	state.Watched = newWatched
+	if err := saveState(state); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	printWatchedState(state)
 }
 
 func cmdStart() {
@@ -316,6 +388,17 @@ func printWatchedList(data json.RawMessage) {
 	} else {
 		fmt.Println("Watched repos:")
 		for _, w := range wd.Watched {
+			fmt.Printf("  %s (%s)\n", w.Name, w.Path)
+		}
+	}
+}
+
+func printWatchedState(state State) {
+	if len(state.Watched) == 0 {
+		fmt.Println("No repos being watched")
+	} else {
+		fmt.Println("Watched repos:")
+		for _, w := range state.Watched {
 			fmt.Printf("  %s (%s)\n", w.Name, w.Path)
 		}
 	}
