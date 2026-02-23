@@ -274,6 +274,9 @@ func (s *Server) persistState() {
 }
 
 func (s *Server) snapshotLoop() {
+	// Take an initial snapshot immediately
+	s.takeSnapshots()
+
 	interval := time.Duration(s.cfg.SnapshotInterval) * time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
