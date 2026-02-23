@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -18,6 +19,8 @@ type Config struct {
 	SnapshotInterval int    `toml:"snapshot_interval"`
 	Editor           string `toml:"editor"`
 	GenCmd           string `toml:"gen_cmd"`
+	GitPath          string `toml:"git_path"`
+	NotesPath        string `toml:"notes_path"`
 }
 
 func configFilePath() string {
@@ -146,4 +149,76 @@ func isProcessRunning(pid int) bool {
 	// On Unix, FindProcess always succeeds. Send signal 0 to check.
 	err = proc.Signal(syscall.Signal(0))
 	return err == nil
+}
+
+func resolvePathTemplate(tmpl, rawDir, date, project string) string {
+	r := strings.NewReplacer("<raw_dir>", rawDir, "<date>", date, "<project>", project)
+	return r.Replace(tmpl)
+}
+
+func resolveGitPath(cfg Config, date, project string) string {
+	tmpl := cfg.GitPath
+	if tmpl == "" {
+		tmpl = "<raw_dir>/<date>/git-<project>.log"
+	}
+	return resolvePathTemplate(tmpl, resolveRawDir(cfg), date, project)
+}
+
+func resolveNotesPath(cfg Config, date, project string) string {
+	tmpl := cfg.NotesPath
+	if tmpl == "" {
+		tmpl = "<raw_dir>/<date>/notes-<project>.md"
+	}
+	return resolvePathTemplate(tmpl, resolveRawDir(cfg), date, project)
+}
+
+func discoverProjects(cfg Config, date string) []string {
+	seen := make(map[string]bool)
+	rawDir := resolveRawDir(cfg)
+
+	gitTmpl := cfg.GitPath
+	if gitTmpl == "" {
+		gitTmpl = "<raw_dir>/<date>/git-<project>.log"
+	}
+	for _, path := range globForTemplate(gitTmpl, rawDir, date) {
+		if p := extractProjectFromPath(path, gitTmpl, rawDir, date); p != "" {
+			seen[p] = true
+		}
+	}
+
+	notesTmpl := cfg.NotesPath
+	if notesTmpl == "" {
+		notesTmpl = "<raw_dir>/<date>/notes-<project>.md"
+	}
+	for _, path := range globForTemplate(notesTmpl, rawDir, date) {
+		if p := extractProjectFromPath(path, notesTmpl, rawDir, date); p != "" {
+			seen[p] = true
+		}
+	}
+
+	projects := make([]string, 0, len(seen))
+	for p := range seen {
+		projects = append(projects, p)
+	}
+	sort.Strings(projects)
+	return projects
+}
+
+func globForTemplate(tmpl, rawDir, date string) []string {
+	pattern := resolvePathTemplate(tmpl, rawDir, date, "*")
+	matches, _ := filepath.Glob(pattern)
+	return matches
+}
+
+func extractProjectFromPath(path, tmpl, rawDir, date string) string {
+	resolved := resolvePathTemplate(tmpl, rawDir, date, "<project>")
+	parts := strings.SplitN(resolved, "<project>", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	prefix, suffix := parts[0], parts[1]
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return ""
+	}
+	return path[len(prefix) : len(path)-len(suffix)]
 }

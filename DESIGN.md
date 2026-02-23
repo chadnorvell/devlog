@@ -108,12 +108,12 @@ JSON line; each response is a single JSON line.
 
 #### Commands
 
-| Command     | Args                                  | Response `data`                                                              |
-|-------------|---------------------------------------|------------------------------------------------------------------------------|
-| `watch`     | `{"path": "...", "name": "..."}` | `{"watched": [{"path": "...", "name": "..."}, ...]}`                    |
-| `unwatch`   | `{"path": "..."}`                     | `{"watched": [{"path": "...", "name": "..."}, ...]}`                    |
+| Command     | Args                                  | Response `data`                                                    |
+|-------------|---------------------------------------|--------------------------------------------------------------------|
+| `watch`     | `{"path": "...", "name": "..."}`      | `{"watched": [{"path": "...", "name": "..."}, ...]}`               |
+| `unwatch`   | `{"path": "..."}`                     | `{"watched": [{"path": "...", "name": "..."}, ...]}`               |
 | `status`    | (none)                                | `{"watched": [{"path": "...", "name": "..."}, ...], "pid": 12345}` |
-| `stop`      | (none)                                | `{}`                                                                         |
+| `stop`      | (none)                                | `{}`                                                               |
 
 The `name` field in the `watch` args is optional; if omitted, the server
 derives the name from the repo directory basename.
@@ -180,6 +180,11 @@ log_dir = ""
 # Default: $XDG_DATA_HOME/devlog/raw (typically ~/.local/share/devlog/raw)
 raw_dir = ""
 
+# Path templates for raw data files. Each template must include both
+# <date> and <project> variables. Defaults place files in raw_dir.
+git_path = "<raw_dir>/<date>/git-<project>.log"
+notes_path = "<raw_dir>/<date>/notes-<project>.md"
+
 # Interval in seconds between git diff snapshots. Default: 300 (5 minutes).
 snapshot_interval = 300
 
@@ -191,6 +196,15 @@ gen_cmd = "claude -p"
 ```
 
 The configuration file is optional. All values have sensible defaults.
+
+**Path templates**: The `git_path` and `notes_path` settings are path templates
+that control where raw data files are read from and written to. Each template
+must include both `<date>` (substituted with `YYYY-MM-DD`) and `<project>`
+(substituted with the project name) variables. The special `<raw_dir>` variable
+expands to the resolved raw directory. These templates are used uniformly
+throughout the application for writing raw data files, discovering projects, and
+reading data for summary generation — the application never hardcodes "look in
+the raw dir" for file discovery.
 
 ### 3.2 Data directories
 
@@ -225,8 +239,11 @@ stored. Determined by, in order of precedence:
 <raw_dir>/
 └── <YYYY-MM-DD>/
     ├── git-<project>.log
-    └── notes-<project>.log
+    └── notes-<project>.md
 ```
+
+These are the default locations. Paths are configurable via the `git_path` and
+`notes_path` templates in `config.toml` (see section 3.1).
 
 **Config** (`$XDG_CONFIG_HOME/devlog/`):
 
@@ -305,8 +322,9 @@ compares the current diff to the previous one. If they are identical, the
 snapshot is skipped. This avoids filling the log with duplicate diffs when the
 user is idle.
 
-#### Raw data file format: `git-<repo>.log`
+#### Raw data file format: `git-<project>.log`
 
+The file path is determined by the `git_path` template (see section 3.1).
 Each snapshot is appended as a fenced block:
 
 ```
@@ -334,17 +352,19 @@ If the date has changed since the last cycle, it:
 ### 4.3 Manually-logged notes
 
 At any time, the user can log thoughts via the `devlog` command (see section
-6.1). Notes are appended to `<raw_dir>/<YYYY-MM-DD>/notes-<repo>.log`.
+6.1). The file path is determined by the `notes_path` template (see section
+3.1). By default, notes are written to
+`<raw_dir>/<YYYY-MM-DD>/notes-<project>.md`.
 
-#### Raw data file format: `notes-<repo>.log`
+#### Raw data file format: `notes-<project>.md`
 
 ```
-=== NOTE 14:35 ===
+### At 14:35
 <message text>
 
 ```
 
-The delimiter line format is `=== NOTE HH:MM ===`. The message text follows
+The delimiter line format is `### At HH:MM`. The message text follows
 verbatim (may be multiple lines), terminated by a blank line.
 
 ## 5. Summary generation
@@ -361,7 +381,8 @@ Before generating, the command checks whether regeneration is needed:
 
 1. Look for an existing summary at `<log_dir>/<date>.md`.
 2. If it exists, get its mtime.
-3. Get the maximum mtime of all files in `<raw_dir>/<date>/`.
+3. For each source path template, substitute `<date>` and glob for `<project>`.
+   Collect the max mtime across all matching files.
 4. If the summary's mtime is more recent than the max raw data mtime, print
    a message ("Summary is up to date, no new data since last generation") and
    exit without invoking the AI.
@@ -371,19 +392,21 @@ Before generating, the command checks whether regeneration is needed:
 
 The generation process:
 
-1. List all files in `<raw_dir>/<date>/`.
-2. Extract the set of project names from the filenames (e.g., `git-devlog.log`
-   and `notes-devlog.log` both map to project `devlog`).
-3. For each project, invoke the configured AI summarizer with the raw data
-   files as context.
-4. Assemble the per-project summaries into a single Markdown file.
+1. For each raw data source path template, substitute `<date>` and replace
+   `<project>` with a glob wildcard.
+2. Glob the filesystem. Extract project names from matches using the template
+   as a pattern.
+3. Take the union of project names across all source types.
+4. For each project, resolve all path templates and read whichever files exist.
+5. Invoke the AI summarizer per project (section 5.4).
+6. Assemble the per-project summaries into a single Markdown file.
 
 ### 5.4 AI summarizer invocation
 
 For each project, the tool:
 
-1. Reads the contents of any raw data files that exist for this project
-   (`git-<project>.log`, `notes-<project>.log`).
+1. Resolves each source path template for this project and reads whichever
+   files exist.
 
 2. Assembles the full prompt by substituting the file contents directly into
    the prompt template (see section 5.5).
@@ -437,7 +460,7 @@ Description of data sources:
   taken every 5 minutes. These show the evolution of the code over the day,
   including approaches that were tried and abandoned.
 
-- notes-<project>.log: Manually logged notes with timestamps, expressing
+- notes-<project>.md: Manually logged notes with timestamps, expressing
   intent, observations, and decisions.
 
 Not all sources may be present. Work with whatever is available.
@@ -469,8 +492,8 @@ it expands to one section per file, e.g.:
 diff --git a/main.go b/main.go
 ...
 
---- notes-myproject.log ---
-=== NOTE 10:20 ===
+--- notes-myproject.md ---
+### At 10:20
 Starting work on the CLI parser
 ```
 
@@ -524,8 +547,9 @@ Log a note for the current project.
    `vi`). When the editor exits, read the file, strip lines starting with `#`,
    and trim whitespace. If the result is empty, print "Note cancelled (empty
    message)" and exit 0.
-6. Append the note to `<raw_dir>/<YYYY-MM-DD>/notes-<project>.log`
-   using the format defined in section 4.3. Create the directory if needed.
+6. Resolve the `notes_path` template for this project and today's date. Append
+   the note to the resulting path using the format defined in section 4.3.
+   Create parent directories if needed.
 7. Print "Logged note for <project>."
 
 **Does not require a running server.**
@@ -538,8 +562,9 @@ Generate a summary for `<date>` (default: today).
 
 1. Validate date format if provided (must be `YYYY-MM-DD`). If invalid, print
    an error and exit 1.
-2. Check for raw data directory `<raw_dir>/<date>/`. If it doesn't
-   exist or is empty, print "No raw data for <date>" and exit 0.
+2. Discover projects using the template-based method described in section 5.3
+   (substitute `<date>`, glob for `<project>`). If no files match any template,
+   print "No raw data for <date>" and exit 0.
 3. Run the staleness check (section 5.2). If the summary is up to date, print
    a message and exit 0.
 4. For each project found in the raw data, invoke the configured AI

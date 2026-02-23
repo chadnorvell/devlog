@@ -35,7 +35,7 @@ Description of data sources:
   taken every 5 minutes. These show the evolution of the code over the day,
   including approaches that were tried and abandoned.
 
-- notes-` + project + `.log: Manually logged notes with timestamps, expressing
+- notes-` + project + `.md: Manually logged notes with timestamps, expressing
   intent, observations, and decisions.
 
 Not all sources may be present. Work with whatever is available.
@@ -61,21 +61,19 @@ Output only the summary text, nothing else.
 	return b.String()
 }
 
-func generateProjectSummary(cfg Config, project, date, rawDir string) (string, error) {
-	dateDir := filepath.Join(rawDir, date)
-
+func generateProjectSummary(cfg Config, project, date string) (string, error) {
 	files := make(map[string]string)
 
 	// Check for git log
-	gitFile := "git-" + project + ".log"
-	if data, err := os.ReadFile(filepath.Join(dateDir, gitFile)); err == nil {
-		files[gitFile] = string(data)
+	gitPath := resolveGitPath(cfg, date, project)
+	if data, err := os.ReadFile(gitPath); err == nil {
+		files[filepath.Base(gitPath)] = string(data)
 	}
 
-	// Check for notes log
-	notesFile := "notes-" + project + ".log"
-	if data, err := os.ReadFile(filepath.Join(dateDir, notesFile)); err == nil {
-		files[notesFile] = string(data)
+	// Check for notes
+	notesPath := resolveNotesPath(cfg, date, project)
+	if data, err := os.ReadFile(notesPath); err == nil {
+		files[filepath.Base(notesPath)] = string(data)
 	}
 
 	if len(files) == 0 {
@@ -103,13 +101,11 @@ func generateProjectSummary(cfg Config, project, date, rawDir string) (string, e
 }
 
 func runGen(cfg Config, date string) error {
-	rawDir := resolveRawDir(cfg)
 	logDir := resolveLogDir(cfg)
-	dateDir := filepath.Join(rawDir, date)
 
-	// Check raw data exists
-	entries, err := os.ReadDir(dateDir)
-	if err != nil || len(entries) == 0 {
+	// Discover projects from raw data
+	projects := discoverProjects(cfg, date)
+	if len(projects) == 0 {
 		fmt.Fprintf(os.Stderr, "No raw data for %s\n", date)
 		return nil
 	}
@@ -118,17 +114,8 @@ func runGen(cfg Config, date string) error {
 	summaryPath := filepath.Join(logDir, date+".md")
 	if summaryInfo, err := os.Stat(summaryPath); err == nil {
 		summaryMtime := summaryInfo.ModTime()
-		var maxRawMtime time.Time
-		for _, e := range entries {
-			info, err := e.Info()
-			if err != nil {
-				continue
-			}
-			if info.ModTime().After(maxRawMtime) {
-				maxRawMtime = info.ModTime()
-			}
-		}
-		if summaryMtime.After(maxRawMtime) {
+		maxRawMtime := collectRawFileMtime(cfg, date)
+		if !maxRawMtime.IsZero() && summaryMtime.After(maxRawMtime) {
 			fmt.Println("Summary is up to date, no new data since last generation")
 			return nil
 		}
@@ -145,13 +132,6 @@ func runGen(cfg Config, date string) error {
 		return fmt.Errorf("summarizer command %q not found on $PATH", args[0])
 	}
 
-	// Extract project names from files
-	projects := extractProjects(entries)
-	if len(projects) == 0 {
-		fmt.Fprintf(os.Stderr, "No raw data for %s\n", date)
-		return nil
-	}
-
 	// Generate summary for each project
 	type projectSummary struct {
 		name    string
@@ -160,7 +140,7 @@ func runGen(cfg Config, date string) error {
 	var summaries []projectSummary
 
 	for _, proj := range projects {
-		summary, err := generateProjectSummary(cfg, proj, date, rawDir)
+		summary, err := generateProjectSummary(cfg, proj, date)
 		if err != nil {
 			return fmt.Errorf("generating summary for %s: %w", proj, err)
 		}
@@ -193,25 +173,34 @@ func runGen(cfg Config, date string) error {
 	return nil
 }
 
-func extractProjects(entries []os.DirEntry) []string {
-	seen := make(map[string]bool)
-	for _, e := range entries {
-		name := e.Name()
-		var project string
-		if strings.HasPrefix(name, "git-") && strings.HasSuffix(name, ".log") {
-			project = strings.TrimSuffix(strings.TrimPrefix(name, "git-"), ".log")
-		} else if strings.HasPrefix(name, "notes-") && strings.HasSuffix(name, ".log") {
-			project = strings.TrimSuffix(strings.TrimPrefix(name, "notes-"), ".log")
-		}
-		if project != "" {
-			seen[project] = true
+func collectRawFileMtime(cfg Config, date string) time.Time {
+	rawDir := resolveRawDir(cfg)
+	var maxMtime time.Time
+
+	gitTmpl := cfg.GitPath
+	if gitTmpl == "" {
+		gitTmpl = "<raw_dir>/<date>/git-<project>.log"
+	}
+	for _, path := range globForTemplate(gitTmpl, rawDir, date) {
+		if info, err := os.Stat(path); err == nil {
+			if info.ModTime().After(maxMtime) {
+				maxMtime = info.ModTime()
+			}
 		}
 	}
 
-	projects := make([]string, 0, len(seen))
-	for p := range seen {
-		projects = append(projects, p)
+	notesTmpl := cfg.NotesPath
+	if notesTmpl == "" {
+		notesTmpl = "<raw_dir>/<date>/notes-<project>.md"
 	}
-	sort.Strings(projects)
-	return projects
+	for _, path := range globForTemplate(notesTmpl, rawDir, date) {
+		if info, err := os.Stat(path); err == nil {
+			if info.ModTime().After(maxMtime) {
+				maxMtime = info.ModTime()
+			}
+		}
+	}
+
+	return maxMtime
 }
+

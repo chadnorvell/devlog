@@ -300,9 +300,6 @@ func (s *Server) takeSnapshots() {
 		s.lastDate = today
 	}
 
-	rawDir := resolveRawDir(s.cfg)
-	dateDir := filepath.Join(rawDir, today)
-
 	s.mu.RLock()
 	repos := make([]WatchEntry, len(s.watched))
 	copy(repos, s.watched)
@@ -310,7 +307,8 @@ func (s *Server) takeSnapshots() {
 
 	for _, entry := range repos {
 		prevDiff := s.prevDiffs[entry.Path]
-		diff, err := takeSnapshot(entry.Path, entry.Name, dateDir, prevDiff)
+		gitFile := resolveGitPath(s.cfg, today, entry.Name)
+		diff, err := takeSnapshot(entry.Path, entry.Name, gitFile, prevDiff)
 		if err != nil {
 			log.Printf("warning: snapshot %s (%s): %v", entry.Name, entry.Path, err)
 			continue

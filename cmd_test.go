@@ -8,22 +8,21 @@ import (
 )
 
 func TestWriteNote(t *testing.T) {
-	dateDir := filepath.Join(t.TempDir(), "2024-01-15")
+	notesFile := filepath.Join(t.TempDir(), "2024-01-15", "notes-myproject.md")
 
-	err := writeNote(dateDir, "myproject", "Testing the note command")
+	err := writeNote(notesFile, "Testing the note command")
 	if err != nil {
 		t.Fatalf("writeNote: %v", err)
 	}
 
-	logFile := filepath.Join(dateDir, "notes-myproject.log")
-	content, err := os.ReadFile(logFile)
+	content, err := os.ReadFile(notesFile)
 	if err != nil {
 		t.Fatalf("reading notes: %v", err)
 	}
 
 	s := string(content)
-	if !strings.Contains(s, "=== NOTE") {
-		t.Error("missing NOTE header")
+	if !strings.Contains(s, "### At") {
+		t.Error("missing note header")
 	}
 	if !strings.Contains(s, "Testing the note command") {
 		t.Error("missing note text")
@@ -34,15 +33,14 @@ func TestWriteNote(t *testing.T) {
 }
 
 func TestWriteNoteMultiple(t *testing.T) {
-	dateDir := filepath.Join(t.TempDir(), "2024-01-15")
+	notesFile := filepath.Join(t.TempDir(), "2024-01-15", "notes-myproject.md")
 
-	writeNote(dateDir, "myproject", "First note")
-	writeNote(dateDir, "myproject", "Second note")
+	writeNote(notesFile, "First note")
+	writeNote(notesFile, "Second note")
 
-	logFile := filepath.Join(dateDir, "notes-myproject.log")
-	content, _ := os.ReadFile(logFile)
+	content, _ := os.ReadFile(notesFile)
 
-	count := strings.Count(string(content), "=== NOTE")
+	count := strings.Count(string(content), "### At")
 	if count != 2 {
 		t.Errorf("expected 2 notes, got %d", count)
 	}

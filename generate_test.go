@@ -10,8 +10,8 @@ import (
 
 func TestAssemblePrompt(t *testing.T) {
 	files := map[string]string{
-		"git-myproject.log":   "=== SNAPSHOT 10:15 ===\ndiff content\n",
-		"notes-myproject.log": "=== NOTE 10:20 ===\nStarted work\n",
+		"git-myproject.log":  "=== SNAPSHOT 10:15 ===\ndiff content\n",
+		"notes-myproject.md": "### At 10:20\nStarted work\n",
 	}
 
 	prompt := assemblePrompt("myproject", "2024-01-15", files)
@@ -30,7 +30,7 @@ func TestAssemblePrompt(t *testing.T) {
 	if !strings.Contains(prompt, "--- git-myproject.log ---") {
 		t.Error("prompt should contain git log section")
 	}
-	if !strings.Contains(prompt, "--- notes-myproject.log ---") {
+	if !strings.Contains(prompt, "--- notes-myproject.md ---") {
 		t.Error("prompt should contain notes section")
 	}
 	if !strings.Contains(prompt, "diff content") {
@@ -48,14 +48,14 @@ func TestAssemblePromptGitOnly(t *testing.T) {
 	if !strings.Contains(prompt, "--- git-myproject.log ---") {
 		t.Error("prompt should contain git log section")
 	}
-	if strings.Contains(prompt, "--- notes-myproject.log ---") {
+	if strings.Contains(prompt, "--- notes-myproject.md ---") {
 		t.Error("prompt should NOT contain notes section when notes don't exist")
 	}
 }
 
 func TestAssemblePromptNotesOnly(t *testing.T) {
 	files := map[string]string{
-		"notes-myproject.log": "=== NOTE 10:20 ===\nsome notes\n",
+		"notes-myproject.md": "### At 10:20\nsome notes\n",
 	}
 
 	prompt := assemblePrompt("myproject", "2024-01-15", files)
@@ -63,25 +63,8 @@ func TestAssemblePromptNotesOnly(t *testing.T) {
 	if strings.Contains(prompt, "--- git-myproject.log ---") {
 		t.Error("prompt should NOT contain git log section when git log doesn't exist")
 	}
-	if !strings.Contains(prompt, "--- notes-myproject.log ---") {
+	if !strings.Contains(prompt, "--- notes-myproject.md ---") {
 		t.Error("prompt should contain notes section")
-	}
-}
-
-func TestExtractProjects(t *testing.T) {
-	tmp := t.TempDir()
-	os.WriteFile(filepath.Join(tmp, "git-foo.log"), []byte("x"), 0o644)
-	os.WriteFile(filepath.Join(tmp, "notes-foo.log"), []byte("x"), 0o644)
-	os.WriteFile(filepath.Join(tmp, "git-bar.log"), []byte("x"), 0o644)
-
-	entries, _ := os.ReadDir(tmp)
-	projects := extractProjects(entries)
-
-	if len(projects) != 2 {
-		t.Fatalf("expected 2 projects, got %d", len(projects))
-	}
-	if projects[0] != "bar" || projects[1] != "foo" {
-		t.Errorf("expected [bar foo], got %v", projects)
 	}
 }
 
@@ -109,10 +92,11 @@ func TestRunGenStalenessCheck(t *testing.T) {
 	os.MkdirAll(dateDir, 0o755)
 	os.MkdirAll(logDir, 0o755)
 
-	// Create raw data with old timestamp
+	// Create raw data with old timestamp (template-resolved default path)
 	rawFile := filepath.Join(dateDir, "git-test.log")
 	os.WriteFile(rawFile, []byte("=== SNAPSHOT 10:00 ===\ndiff\n"), 0o644)
-	os.Chtimes(rawFile, time.Now().Add(-1*time.Hour), time.Now().Add(-1*time.Hour))
+	past := time.Now().Add(-1 * time.Hour)
+	os.Chtimes(rawFile, past, past)
 
 	// Create summary with newer timestamp
 	summaryPath := filepath.Join(logDir, date+".md")

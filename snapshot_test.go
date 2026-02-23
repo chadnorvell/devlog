@@ -66,12 +66,12 @@ func TestResolveRepoRoot(t *testing.T) {
 
 func TestSnapshotNewDiff(t *testing.T) {
 	repo := initTestRepo(t)
-	rawDir := filepath.Join(t.TempDir(), "raw", "2024-01-15")
+	logFile := filepath.Join(t.TempDir(), "raw", "2024-01-15", "git-test-project.log")
 
 	// Make a change
 	os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main\n"), 0o644)
 
-	diff, err := takeSnapshot(repo, "test-project", rawDir, "")
+	diff, err := takeSnapshot(repo, "test-project", logFile, "")
 	if err != nil {
 		t.Fatalf("takeSnapshot: %v", err)
 	}
@@ -80,7 +80,6 @@ func TestSnapshotNewDiff(t *testing.T) {
 	}
 
 	// Verify log file
-	logFile := filepath.Join(rawDir, "git-test-project.log")
 	content, err := os.ReadFile(logFile)
 	if err != nil {
 		t.Fatalf("reading log: %v", err)
@@ -97,19 +96,19 @@ func TestSnapshotNewDiff(t *testing.T) {
 
 func TestSnapshotDedup(t *testing.T) {
 	repo := initTestRepo(t)
-	rawDir := filepath.Join(t.TempDir(), "raw", "2024-01-15")
+	logFile := filepath.Join(t.TempDir(), "raw", "2024-01-15", "git-test-project.log")
 
 	// Make a change
 	os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main\n"), 0o644)
 
 	// First snapshot
-	diff1, err := takeSnapshot(repo, "test-project", rawDir, "")
+	diff1, err := takeSnapshot(repo, "test-project", logFile, "")
 	if err != nil {
 		t.Fatalf("first snapshot: %v", err)
 	}
 
 	// Second snapshot with same prevDiff — should dedup
-	diff2, err := takeSnapshot(repo, "test-project", rawDir, diff1)
+	diff2, err := takeSnapshot(repo, "test-project", logFile, diff1)
 	if err != nil {
 		t.Fatalf("second snapshot: %v", err)
 	}
@@ -118,7 +117,6 @@ func TestSnapshotDedup(t *testing.T) {
 	}
 
 	// Log file should only have one snapshot
-	logFile := filepath.Join(rawDir, "git-test-project.log")
 	content, _ := os.ReadFile(logFile)
 	count := strings.Count(string(content), "=== SNAPSHOT")
 	if count != 1 {
@@ -128,10 +126,10 @@ func TestSnapshotDedup(t *testing.T) {
 
 func TestSnapshotEmptyDiff(t *testing.T) {
 	repo := initTestRepo(t)
-	rawDir := filepath.Join(t.TempDir(), "raw", "2024-01-15")
+	logFile := filepath.Join(t.TempDir(), "raw", "2024-01-15", "git-test-project.log")
 
 	// No changes — diff should be empty
-	diff, err := takeSnapshot(repo, "test-project", rawDir, "")
+	diff, err := takeSnapshot(repo, "test-project", logFile, "")
 	if err != nil {
 		t.Fatalf("takeSnapshot: %v", err)
 	}
@@ -140,7 +138,6 @@ func TestSnapshotEmptyDiff(t *testing.T) {
 	}
 
 	// Log file should not exist
-	logFile := filepath.Join(rawDir, "git-test-project.log")
 	if _, err := os.Stat(logFile); !os.IsNotExist(err) {
 		t.Error("log file should not exist for empty diff")
 	}
@@ -148,12 +145,12 @@ func TestSnapshotEmptyDiff(t *testing.T) {
 
 func TestSnapshotUntrackedFiles(t *testing.T) {
 	repo := initTestRepo(t)
-	rawDir := filepath.Join(t.TempDir(), "raw", "2024-01-15")
+	logFile := filepath.Join(t.TempDir(), "raw", "2024-01-15", "git-test-project.log")
 
 	// Create a new untracked file
 	os.WriteFile(filepath.Join(repo, "newfile.txt"), []byte("hello\n"), 0o644)
 
-	diff, err := takeSnapshot(repo, "test-project", rawDir, "")
+	diff, err := takeSnapshot(repo, "test-project", logFile, "")
 	if err != nil {
 		t.Fatalf("takeSnapshot: %v", err)
 	}
@@ -164,7 +161,7 @@ func TestSnapshotUntrackedFiles(t *testing.T) {
 
 func TestSnapshotDoesNotDisturbRealIndex(t *testing.T) {
 	repo := initTestRepo(t)
-	rawDir := filepath.Join(t.TempDir(), "raw", "2024-01-15")
+	logFile := filepath.Join(t.TempDir(), "raw", "2024-01-15", "git-test-project.log")
 
 	// Stage a file in the real index
 	os.WriteFile(filepath.Join(repo, "staged.go"), []byte("package main\n"), 0o644)
@@ -174,7 +171,7 @@ func TestSnapshotDoesNotDisturbRealIndex(t *testing.T) {
 	os.WriteFile(filepath.Join(repo, "unstaged.go"), []byte("package main\n"), 0o644)
 
 	// Take snapshot
-	_, err := takeSnapshot(repo, "test-project", rawDir, "")
+	_, err := takeSnapshot(repo, "test-project", logFile, "")
 	if err != nil {
 		t.Fatalf("takeSnapshot: %v", err)
 	}
@@ -198,13 +195,12 @@ func TestSnapshotDoesNotDisturbRealIndex(t *testing.T) {
 
 func TestSnapshotFormat(t *testing.T) {
 	repo := initTestRepo(t)
-	rawDir := filepath.Join(t.TempDir(), "raw", "2024-01-15")
+	logFile := filepath.Join(t.TempDir(), "raw", "2024-01-15", "git-myproject.log")
 
 	os.WriteFile(filepath.Join(repo, "file.txt"), []byte("content\n"), 0o644)
 
-	takeSnapshot(repo, "myproject", rawDir, "")
+	takeSnapshot(repo, "myproject", logFile, "")
 
-	logFile := filepath.Join(rawDir, "git-myproject.log")
 	content, _ := os.ReadFile(logFile)
 	lines := strings.Split(string(content), "\n")
 

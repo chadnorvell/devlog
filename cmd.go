@@ -38,8 +38,7 @@ func cmdNote() {
 	projectName := projectNameForRepo(repoRoot, state, "")
 
 	today := time.Now().Format("2006-01-02")
-	rawDir := resolveRawDir(cfg)
-	dateDir := filepath.Join(rawDir, today)
+	notesFile := resolveNotesPath(cfg, today, projectName)
 
 	var noteText string
 	if *msg != "" {
@@ -56,7 +55,7 @@ func cmdNote() {
 		}
 	}
 
-	if err := writeNote(dateDir, projectName, noteText); err != nil {
+	if err := writeNote(notesFile, noteText); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -101,20 +100,19 @@ func editNote(cfg Config, projectName string) (string, error) {
 	return strings.TrimSpace(strings.Join(lines, "\n")), nil
 }
 
-func writeNote(dateDir, projectName, text string) error {
-	if err := os.MkdirAll(dateDir, 0o755); err != nil {
+func writeNote(notesFile, text string) error {
+	if err := os.MkdirAll(filepath.Dir(notesFile), 0o755); err != nil {
 		return fmt.Errorf("creating raw dir: %w", err)
 	}
 
-	logFile := filepath.Join(dateDir, "notes-"+projectName+".log")
-	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(notesFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("opening notes file: %w", err)
 	}
 	defer f.Close()
 
 	now := time.Now()
-	header := fmt.Sprintf("=== NOTE %02d:%02d ===\n", now.Hour(), now.Minute())
+	header := fmt.Sprintf("### At %02d:%02d\n", now.Hour(), now.Minute())
 	if _, err := f.WriteString(header + text + "\n\n"); err != nil {
 		return fmt.Errorf("writing note: %w", err)
 	}

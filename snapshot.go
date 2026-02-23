@@ -21,8 +21,8 @@ func resolveRepoRoot(dir string) (string, error) {
 // takeSnapshot captures the current state of a repo using the shadow index
 // technique. It returns the diff string and whether anything was written.
 // If prevDiff matches the current diff, the snapshot is skipped (dedup).
-// rawDir is the date-specific raw directory (e.g., <raw_dir>/2024-01-15/).
-func takeSnapshot(repoPath, projectName, rawDir, prevDiff string) (diff string, err error) {
+// logFile is the resolved path where the snapshot will be appended.
+func takeSnapshot(repoPath, projectName, logFile, prevDiff string) (diff string, err error) {
 	shadowIndex := filepath.Join(repoPath, ".git", "devlog_shadow_index")
 
 	// Step 1: git add -A with shadow index
@@ -53,11 +53,10 @@ func takeSnapshot(repoPath, projectName, rawDir, prevDiff string) (diff string, 
 	}
 
 	// Write snapshot to raw file
-	if err := os.MkdirAll(rawDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(logFile), 0o755); err != nil {
 		return "", fmt.Errorf("creating raw dir: %w", err)
 	}
 
-	logFile := filepath.Join(rawDir, "git-"+projectName+".log")
 	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return "", fmt.Errorf("opening log file: %w", err)
