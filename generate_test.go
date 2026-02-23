@@ -131,18 +131,18 @@ func TestRunGenStalenessCheck(t *testing.T) {
 	}
 }
 
-func TestRunGenWithMockClaude(t *testing.T) {
+func TestRunGenWithMockSummarizer(t *testing.T) {
 	tmp := t.TempDir()
 	rawDir := filepath.Join(tmp, "raw")
 	logDir := filepath.Join(tmp, "log")
 	t.Setenv("DEVLOG_RAW_DIR", rawDir)
 	t.Setenv("DEVLOG_LOG_DIR", logDir)
 
-	// Create a mock claude script
+	// Create a mock summarizer script
 	mockBin := filepath.Join(tmp, "bin")
 	os.MkdirAll(mockBin, 0o755)
-	mockClaude := filepath.Join(mockBin, "claude")
-	os.WriteFile(mockClaude, []byte("#!/bin/sh\necho 'This is a test summary.'\n"), 0o755)
+	mockSummarizer := filepath.Join(mockBin, "mysummarizer")
+	os.WriteFile(mockSummarizer, []byte("#!/bin/sh\necho 'This is a test summary.'\n"), 0o755)
 	t.Setenv("PATH", mockBin+":"+os.Getenv("PATH"))
 
 	date := "2024-01-15"
@@ -151,7 +151,9 @@ func TestRunGenWithMockClaude(t *testing.T) {
 	os.WriteFile(filepath.Join(dateDir, "git-myproject.log"),
 		[]byte("=== SNAPSHOT 10:00 ===\ndiff content\n\n"), 0o644)
 
-	cfg := Config{}
+	cfg := Config{
+		GenCmd: "mysummarizer",
+	}
 	err := runGen(cfg, date)
 	if err != nil {
 		t.Fatalf("runGen: %v", err)
@@ -171,6 +173,6 @@ func TestRunGenWithMockClaude(t *testing.T) {
 		t.Error("summary should contain project heading")
 	}
 	if !strings.Contains(s, "This is a test summary.") {
-		t.Error("summary should contain claude output")
+		t.Error("summary should contain summarizer output")
 	}
 }

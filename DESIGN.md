@@ -18,8 +18,8 @@ The tool accomplishes this by:
 - Storing all raw data in plain text files, timestamped and organized by date
   and project. This raw data is not intended for human consumption.
 
-- Using Claude Code in headless mode to generate a rich, concise summary of
-  the day's work from the raw data.
+- Using an AI summarizer (defaulting to Claude Code) in headless mode to
+  generate a rich, concise summary of the day's work from the raw data.
 
 - Writing the summaries to Markdown files that work well with tools like
   Obsidian but are not specific to any tool.
@@ -43,7 +43,7 @@ The tool accomplishes this by:
 
 - GUI note capture. Notes are captured via the terminal only.
 
-- AI interaction logging (e.g., Claude Code session transcripts). Future work.
+- AI interaction logging (e.g., LLM session transcripts). Future work.
 
 ### 1.4 Project standards
 
@@ -55,8 +55,8 @@ The tool accomplishes this by:
 - Single binary. All subcommands (client and server) are compiled into one
   `devlog` executable.
 
-- No external dependencies at runtime other than `git` and `claude` (the
-  Claude Code CLI).
+- No external dependencies at runtime other than `git` and an AI CLI (like
+  `claude` or `gemini-cli`).
 
 ## 2. Architecture
 
@@ -77,8 +77,8 @@ Some commands do not require a running server:
 - `devlog -m <message>` / `devlog` (log a note): Writes directly to the raw
   data files. Does not contact the server.
 
-- `devlog gen`: Reads raw data files and invokes Claude Code. Does not contact
-  the server.
+- `devlog gen`: Reads raw data files and invokes the configured AI
+  summarizer. Does not contact the server.
 
 ### 2.2 IPC: Unix domain socket
 
@@ -185,6 +185,9 @@ snapshot_interval = 300
 
 # Editor to use for `devlog` (no -m). Falls back to $EDITOR, then "vi".
 editor = ""
+
+# AI summarizer command. Change this to use other AI tools.
+gen_cmd = "claude -p"
 ```
 
 The configuration file is optional. All values have sensible defaults.
@@ -350,7 +353,7 @@ verbatim (may be multiple lines), terminated by a blank line.
 
 Summary generation is triggered by `devlog gen` (see section 6.2). It does not
 require a running server. It reads raw data files directly from disk and
-invokes Claude Code to produce the summary.
+invokes the configured AI summarizer to produce the summary.
 
 ### 5.2 Staleness check
 
@@ -371,10 +374,11 @@ The generation process:
 1. List all files in `<raw_dir>/<date>/`.
 2. Extract the set of project names from the filenames (e.g., `git-devlog.log`
    and `notes-devlog.log` both map to project `devlog`).
-3. For each project, invoke Claude Code with the raw data files as context.
+3. For each project, invoke the configured AI summarizer with the raw data
+   files as context.
 4. Assemble the per-project summaries into a single Markdown file.
 
-### 5.4 Claude Code invocation
+### 5.4 AI summarizer invocation
 
 For each project, the tool:
 
@@ -384,34 +388,37 @@ For each project, the tool:
 2. Assembles the full prompt by substituting the file contents directly into
    the prompt template (see section 5.5).
 
-3. Passes the assembled prompt to Claude Code via stdin:
+3. Passes the assembled prompt to the AI summarizer via stdin. For example,
+   if `gen_cmd = "claude -p"`:
 
    ```bash
    echo "<assembled prompt>" | claude -p
    ```
 
-   In Go, this means writing the prompt to `cmd.Stdin` and reading the
-   response from `cmd.Stdout`:
+   In Go, this means parsing `gen_cmd` into a command and arguments, writing the
+   prompt to `cmd.Stdin`, and reading the response from `cmd.Stdout`:
 
    ```go
-   cmd := exec.Command("claude", "-p")
+   // Pseudo-code for dynamic command execution
+   args := strings.Fields(config.GenCmd)
+   cmd := exec.Command(args[0], args[1:]...)
    cmd.Stdin = strings.NewReader(assembledPrompt)
    output, err := cmd.Output()
    ```
 
-4. Captures Claude's stdout as the summary text for this project.
+4. Captures the command's stdout as the summary text for this project.
 
-If `claude` is not found on `$PATH`, exit with an error: "claude (Claude Code
-CLI) is required for summary generation but was not found on $PATH."
+If the command specified in `gen_cmd` is not found on `$PATH`, exit with an
+error: "Summarizer command '<cmd>' not found on $PATH."
 
-If the `claude` command exits with a non-zero status, print the error output
-and exit with a non-zero status. Do not write a partial summary file.
+If the command exits with a non-zero status, print the error output and exit
+with a non-zero status. Do not write a partial summary file.
 
 ### 5.5 Prompt template
 
 The prompt template below is used for each project. The tool substitutes
 `<project>`, `<date>`, and the raw data file contents before sending to
-Claude. Sections for files that don't exist are omitted entirely.
+the AI summarizer. Sections for files that don't exist are omitted entirely.
 
 ```
 You are summarizing a day of software engineering work on the project
@@ -535,7 +542,8 @@ Generate a summary for `<date>` (default: today).
    exist or is empty, print "No raw data for <date>" and exit 0.
 3. Run the staleness check (section 5.2). If the summary is up to date, print
    a message and exit 0.
-4. For each project found in the raw data, invoke Claude Code (section 5.4).
+4. For each project found in the raw data, invoke the configured AI
+   summarizer (section 5.4).
 5. Assemble and write the summary file (section 5.6).
 6. Print "Summary written to <path>".
 
@@ -664,8 +672,8 @@ Print the current server status.
 | Server not running when required | Print a clear error message directing user to run `devlog start`. Exit 1. |
 | Not in a git repo when required | Print "Error: not in a git repository" to stderr. Exit 1. |
 | Invalid date format | Print "Error: invalid date format, expected YYYY-MM-DD" to stderr. Exit 1. |
-| `claude` not on PATH for `gen` | Print error with install instructions. Exit 1. |
-| Claude Code returns non-zero | Print claude's stderr. Exit 1. Do not write partial summary. |
+| `gen_cmd` not on PATH for `gen` | Print error with instructions. Exit 1. |
+| AI summarizer returns non-zero | Print command's stderr. Exit 1. Do not write partial summary. |
 
 ## 8. Systemd integration
 
@@ -701,7 +709,7 @@ user (or to a NixOS module in the future).
   - `github.com/BurntSushi/toml` for config parsing
   - Standard `encoding/json` for IPC
   - Standard `net` for Unix sockets
-  - Standard `os/exec` for invoking `git` and `claude`
+  - Standard `os/exec` for invoking `git` and the AI summarizer
 
 ### 9.2 Code structure
 
@@ -714,7 +722,7 @@ devlog/
 ├── config.go              # Config file and path resolution (XDG dirs)
 ├── state.go               # state.json read/write
 ├── ipc.go                 # IPC request/response types and client helper
-├── generate.go            # Summary generation: claude invocation, prompt assembly
+├── generate.go            # Summary generation: summarizer invocation, prompt assembly
 ├── flake.nix
 ├── go.mod
 ├── go.sum
@@ -761,7 +769,7 @@ own `flag.FlagSet`. Keep all files in the `main` package — there's no need for
 
 The flake should provide:
 
-- A dev shell with Go, git, and claude
+- A dev shell with Go, git, and an AI CLI (like `claude` or `gemini-cli`)
 - A package that builds the `devlog` binary
 
 ### 9.4 Build and install
@@ -797,9 +805,9 @@ have subtle bugs:
   `state.json` with and without `--name` overrides.
 
 - **Summary generation** (`generate_test.go`): Test prompt assembly with
-  various combinations of present/absent raw data files. Mock the `claude`
-  command (e.g., with a shell script that echoes a canned response) to test
-  the end-to-end flow without making real AI calls.
+  various combinations of present/absent raw data files. Mock the AI
+  summarizer command (e.g., with a shell script that echoes a canned
+  response) to test the end-to-end flow without making real AI calls.
 
 Use `t.TempDir()` for all tests that touch the filesystem. Tests should not
 depend on any external state or services.

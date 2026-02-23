@@ -61,7 +61,7 @@ Output only the summary text, nothing else.
 	return b.String()
 }
 
-func generateProjectSummary(project, date, rawDir string) (string, error) {
+func generateProjectSummary(cfg Config, project, date, rawDir string) (string, error) {
 	dateDir := filepath.Join(rawDir, date)
 
 	files := make(map[string]string)
@@ -84,14 +84,19 @@ func generateProjectSummary(project, date, rawDir string) (string, error) {
 
 	prompt := assemblePrompt(project, date, files)
 
-	cmd := exec.Command("claude", "-p")
+	args := strings.Fields(cfg.GenCmd)
+	if len(args) == 0 {
+		return "", fmt.Errorf("gen_cmd is empty")
+	}
+
+	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("claude failed: %s", string(exitErr.Stderr))
+			return "", fmt.Errorf("%s failed: %s", args[0], string(exitErr.Stderr))
 		}
-		return "", fmt.Errorf("running claude: %w", err)
+		return "", fmt.Errorf("running %s: %w", args[0], err)
 	}
 
 	return strings.TrimSpace(string(out)), nil
@@ -131,9 +136,13 @@ func runGen(cfg Config, date string) error {
 		os.Remove(summaryPath)
 	}
 
-	// Check claude is available
-	if _, err := exec.LookPath("claude"); err != nil {
-		return fmt.Errorf("claude (Claude Code CLI) is required for summary generation but was not found on $PATH")
+	// Check summarizer is available
+	args := strings.Fields(cfg.GenCmd)
+	if len(args) == 0 {
+		return fmt.Errorf("gen_cmd is empty")
+	}
+	if _, err := exec.LookPath(args[0]); err != nil {
+		return fmt.Errorf("summarizer command %q not found on $PATH", args[0])
 	}
 
 	// Extract project names from files
@@ -151,7 +160,7 @@ func runGen(cfg Config, date string) error {
 	var summaries []projectSummary
 
 	for _, proj := range projects {
-		summary, err := generateProjectSummary(proj, date, rawDir)
+		summary, err := generateProjectSummary(cfg, proj, date, rawDir)
 		if err != nil {
 			return fmt.Errorf("generating summary for %s: %w", proj, err)
 		}

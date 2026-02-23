@@ -17,6 +17,7 @@ type Config struct {
 	RawDir           string `toml:"raw_dir"`
 	SnapshotInterval int    `toml:"snapshot_interval"`
 	Editor           string `toml:"editor"`
+	GenCmd           string `toml:"gen_cmd"`
 }
 
 func configFilePath() string {
@@ -30,6 +31,7 @@ func configFilePath() string {
 func loadConfig() (Config, error) {
 	cfg := Config{
 		SnapshotInterval: 300,
+		GenCmd:           "claude -p",
 	}
 
 	path := configFilePath()
