@@ -1,0 +1,12 @@
+# devlog.service — install to ~/.config/systemd/user/
+[Unit]
+Description=Devlog server
+
+[Service]
+Type=simple
+ExecStart=/path/to/devlog start
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
