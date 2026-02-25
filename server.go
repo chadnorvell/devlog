@@ -92,6 +92,8 @@ func (s *Server) run() error {
 
 	log.Printf("devlog server started (PID %d), watching %d repos", os.Getpid(), len(s.watched))
 
+	krunnerCleanup := startKRunner(s)
+
 	// Signal handling
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -110,6 +112,9 @@ func (s *Server) run() error {
 		log.Println("shutting down")
 	}
 
+	if krunnerCleanup != nil {
+		krunnerCleanup()
+	}
 	s.cancel()
 	return nil
 }

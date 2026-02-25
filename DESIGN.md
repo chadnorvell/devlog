@@ -56,7 +56,9 @@ The tool accomplishes this by:
   `devlog` executable.
 
 - No external dependencies at runtime other than `git` and an AI CLI (like
-  `claude` or `gemini-cli`).
+  `claude` or `gemini-cli`). The KRunner integration (section 2.3) optionally
+  requires a D-Bus session bus and KDialog; if either is unavailable, the
+  feature is silently disabled and all other functionality works normally.
 
 ## 2. Architecture
 
@@ -65,8 +67,9 @@ The tool accomplishes this by:
 The system has two process roles compiled into a single binary:
 
 - **Server**: A long-running daemon that periodically snapshots git diffs for
-  watched repositories. It listens on a Unix domain socket for commands from
-  the client. It is typically managed by a systemd user service.
+  watched repositories and handles D-Bus requests to provide runtime data to
+  other services. It listens on a Unix domain socket for commands from the
+  client. It is typically managed by a systemd user service.
 
 - **Client**: Short-lived CLI invocations (`devlog watch`, `devlog stop`,
   etc.) that send commands to the server over the Unix socket and print
@@ -123,7 +126,70 @@ JSON line; each response is a single JSON line.
 The `name` field in the `watch` args is optional; if omitted, the server
 derives the name from the repo directory basename.
 
-### 2.3 Server lifecycle
+### 2.3 D-Bus integration
+
+To allow other services to integrate with `devlog`, the server optionally
+registers on the D-Bus session bus. On startup, the server checks whether both
+D-Bus and KDialog are available. If either is missing, D-Bus registration is
+skipped with a log message and the server continues normally. When D-Bus is
+enabled, the server implements these interfaces:
+
+#### org.kde.krunner1
+
+This allows KRunner to be used to submit a manual note for any project outside
+of a terminal environment. The input starts with a hashtag indicating the
+project. The D-Bus service provides auto-completion of known projects, such
+that partial hashtag entry provides candidate projects for selection in
+KRunner. If the hashtag is followed by whitespace and then note content,
+submitting/running the action will call `devlog -m <content> -p <project>`. If
+there is no non-whitespace content other than the hashtag, a KDialog will be
+launched with a multi-line text box to capture longer input. When that dialog
+is submitted, the action will call `devlog -m <content> -p <project>`.
+
+- Destination path: `/krunner`
+- Destination name: `org.devlog.krunner`
+
+- **Match**
+
+  - Is triggered when the query starts with `#`
+
+  - The `#` hashtag is used to identify the project the note should be
+    associated with, and this service provides auto-completion for all projects
+    currently being watched
+
+  - If the project name does not match any watched project and the query
+    includes note content (e.g., `#newproject some text`), a lower-relevance
+    fallback match is offered so that users can log notes for unwatched
+    projects. If only the hashtag and project name are entered with no content,
+    no fallback is offered (to avoid launching a dialog for a potential typo
+    mid-autocomplete).
+
+- **Run**
+
+  - Is triggered when the user submits the KRunner input
+
+  - Calls `devlog -m <content> -p <project>`
+
+#### KRunner .desktop file
+
+The `.desktop` file (`org.devlog.krunner.desktop`) must be installed to
+`~/.local/share/krunner/dbusplugins/` for KRunner to discover it. Key metadata
+entries:
+
+- `X-Plasma-DBusRunner-Service=org.devlog.krunner*` — The trailing wildcard
+  causes KRunner to dynamically discover the service by scanning the session
+  bus for matching names. Without the wildcard, KRunner treats the service as
+  D-Bus-activatable, which requires a separate D-Bus `.service` file. The
+  wildcard approach allows KRunner to use the service when the devlog server is
+  running and silently skip it when it is not.
+
+- `X-Plasma-Runner-Match-Regex=^#` — Tells KRunner to only query this runner
+  for queries starting with `#`, avoiding unnecessary D-Bus calls.
+
+- `X-Plasma-Runner-Min-Letter-Count=2` — Requires at least two characters
+  (the `#` plus one letter) before querying.
+
+### 2.4 Server lifecycle
 
 - **PID file**: The server writes its PID to
   `$XDG_RUNTIME_DIR/devlog.pid` (or `/tmp/devlog-<uid>.pid`). Before
@@ -138,7 +204,7 @@ derives the name from the repo directory basename.
   all watch goroutines, close the socket, remove the PID file and socket file,
   and exit cleanly.
 
-### 2.4 Server state persistence
+### 2.5 Server state persistence
 
 The set of watched repositories is persisted to a JSON file so that the server
 can resume watching after a restart:
@@ -526,21 +592,22 @@ heading of the date, followed by second-level headings for each project.
 The `devlog` command is the single entry point. Behavior is determined by the
 subcommand (or lack thereof).
 
-### 6.1 `devlog [-m <message>]` (no subcommand)
+### 6.1 `devlog [-m <message>] [-p <project>]` (no subcommand)
 
 Log a note for the current project.
 
-**Precondition**: Must be invoked from within a git repository. If not, print
-"Error: not in a git repository" to stderr and exit 1.
+**Precondition**: If the `-p` argument is not provided, this must be invoked
+from within a git repository. If not, print "Error: not in a git repository" to
+stderr and exit 1.
 
 **Behavior**:
 
-1. Resolve the absolute path to the current repo root.
-2. Determine the project name: read `state.json` and look for an entry whose
-   `path` matches the repo root. If found, use its `name`. If not found (repo
-   is not watched), fall back to the basename of the repo root. This ensures
-   notes use the same project name as the watch command, including any
-   `--name` override.
+1. Determine the project name: If the `-p` argument is provided, use it as the
+   project name. Otherwise, resolve the absolute path to the current repo root,
+   then read `state.json` and look for an entry whose `path` matches the repo
+   root. If found, use its `name`. If not found (repo is not watched), fall
+   back to the basename of the repo root. This ensures notes use the same
+   project name as the watch command, including any `--name` override.
 3. Determine today's date (`YYYY-MM-DD`).
 4. If `-m <message>` is provided, use `<message>` as the note text.
 5. If `-m` is not provided, create a temporary file pre-filled with:
@@ -670,15 +737,20 @@ The server runs three kinds of concurrent work:
   sequentially and takes a snapshot for each. Snapshots are I/O-bound (running
   `git`), so sequential execution per tick is fine.
 
+- **D-Bus listener goroutine** (optional): If D-Bus integration is enabled
+  (see section 2.3), handles incoming D-Bus method calls for the KRunner
+  interface. Reads the watched repo list (takes a read lock).
+
 - **Main goroutine**: Coordinates shutdown. Listens for OS signals (`SIGTERM`,
   `SIGINT`) and the `stop` IPC command. When triggered, cancels a shared
-  `context.Context`, which causes the socket listener and snapshot ticker to
-  stop.
+  `context.Context`, which causes the socket listener, snapshot ticker, and
+  D-Bus listener (if active) to stop.
 
 **Shared state**: The list of watched repos is the only mutable shared state.
-It is accessed by both the socket listener (watch/unwatch commands) and the
-snapshot ticker. Protect it with a `sync.RWMutex`: the snapshot ticker takes a
-read lock; watch/unwatch commands take a write lock.
+It is accessed by the socket listener (watch/unwatch commands), the snapshot
+ticker, and the D-Bus listener (if active). Protect it with a `sync.RWMutex`:
+the snapshot ticker and D-Bus listener take a read lock; watch/unwatch commands
+take a write lock.
 
 ### 6.6 `devlog stop`
 
@@ -757,9 +829,10 @@ user (or to a NixOS module in the future).
 - Use the standard library where possible. Minimize third-party dependencies.
 - Recommended libraries:
   - `github.com/BurntSushi/toml` for config parsing
+  - `github.com/godbus/dbus/v5` for D-Bus integration (KRunner)
   - Standard `encoding/json` for IPC
   - Standard `net` for Unix sockets
-  - Standard `os/exec` for invoking `git` and the AI summarizer
+  - Standard `os/exec` for invoking `git`, the AI summarizer, and KDialog
 
 ### 9.2 Code structure
 
@@ -773,6 +846,8 @@ devlog/
 ├── state.go               # state.json read/write
 ├── ipc.go                 # IPC request/response types and client helper
 ├── generate.go            # Summary generation: summarizer invocation, prompt assembly
+├── krunner.go             # D-Bus KRunner integration (optional)
+├── org.devlog.krunner.desktop  # KRunner plugin descriptor (install to dbusplugins/)
 ├── flake.nix
 ├── go.mod
 ├── go.sum

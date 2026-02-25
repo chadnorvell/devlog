@@ -14,6 +14,7 @@ import (
 func cmdNote() {
 	fs := flag.NewFlagSet("note", flag.ExitOnError)
 	msg := fs.String("m", "", "note message")
+	proj := fs.String("p", "", "project name")
 	fs.Parse(os.Args[1:])
 
 	cfg, err := loadConfig()
@@ -22,20 +23,25 @@ func cmdNote() {
 		os.Exit(1)
 	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	var projectName string
+	if *proj != "" {
+		projectName = *proj
+	} else {
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 
-	repoRoot, err := resolveRepoRoot(cwd)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error: not in a git repository")
-		os.Exit(1)
-	}
+		repoRoot, err := resolveRepoRoot(cwd)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Error: not in a git repository")
+			os.Exit(1)
+		}
 
-	state, _ := loadState()
-	projectName := projectNameForRepo(repoRoot, state, "")
+		state, _ := loadState()
+		projectName = projectNameForRepo(repoRoot, state, "")
+	}
 
 	today := time.Now().Format("2006-01-02")
 	notesFile := resolveNotesPath(cfg, today, projectName)

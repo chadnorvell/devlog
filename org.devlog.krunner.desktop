@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Devlog
+Comment=Log notes to devlog projects
+Icon=document-edit
+Type=Service
+X-KDE-ServiceTypes=Plasma/Runner
+X-KDE-PluginInfo-Name=devlog
+X-Plasma-DBusRunner-Service=org.devlog.krunner*
+X-Plasma-API=DBus
+X-Plasma-DBusRunner-Path=/krunner
+X-Plasma-Runner-Match-Regex=^#
+X-Plasma-Runner-Min-Letter-Count=2
