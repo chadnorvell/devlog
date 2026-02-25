@@ -132,6 +132,8 @@ func cmdGen() {
 		os.Exit(1)
 	}
 
+	state, _ := loadState()
+
 	date := time.Now().Format("2006-01-02")
 	if len(os.Args) >= 3 && os.Args[1] == "gen" {
 		date = os.Args[2]
@@ -141,7 +143,7 @@ func cmdGen() {
 		}
 	}
 
-	if err := runGen(cfg, date); err != nil {
+	if err := runGen(cfg, state, date); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -159,6 +161,8 @@ func cmdGenPrompt() {
 		os.Exit(1)
 	}
 
+	state, _ := loadState()
+
 	date := time.Now().Format("2006-01-02")
 	if len(os.Args) >= 3 && os.Args[1] == "gen-prompt" {
 		date = os.Args[2]
@@ -168,7 +172,7 @@ func cmdGenPrompt() {
 		}
 	}
 
-	if err := runGenPrompt(cfg, date); err != nil {
+	if err := runGenPrompt(cfg, state, date); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

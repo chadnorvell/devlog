@@ -21,6 +21,8 @@ type Config struct {
 	GenCmd           string `toml:"gen_cmd"`
 	GitPath          string `toml:"git_path"`
 	NotesPath        string `toml:"notes_path"`
+	TermPath         string `toml:"term_path"`
+	ClaudeCodeDir    *string `toml:"claude_code_dir"`
 }
 
 func configFilePath() string {
@@ -172,6 +174,14 @@ func resolveNotesPath(cfg Config, date, project string) string {
 	return resolvePathTemplate(tmpl, resolveRawDir(cfg), date, project)
 }
 
+func resolveTermGlob(cfg Config, date, project string) string {
+	tmpl := cfg.TermPath
+	if tmpl == "" {
+		tmpl = "<raw_dir>/<date>/term-<project>*.log"
+	}
+	return resolvePathTemplate(tmpl, resolveRawDir(cfg), date, project)
+}
+
 func discoverProjects(cfg Config, date string) []string {
 	seen := make(map[string]bool)
 	rawDir := resolveRawDir(cfg)
@@ -221,4 +231,24 @@ func extractProjectFromPath(path, tmpl, rawDir, date string) string {
 		return ""
 	}
 	return path[len(prefix) : len(path)-len(suffix)]
+}
+
+func resolveClaudeCodeDir(cfg Config) string {
+	if cfg.ClaudeCodeDir != nil {
+		dir := *cfg.ClaudeCodeDir
+		if dir == "" {
+			return ""
+		}
+		if strings.HasPrefix(dir, "~/") {
+			home, _ := os.UserHomeDir()
+			return filepath.Join(home, dir[2:])
+		}
+		return dir
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude", "projects")
+}
+
+func repoPathToClaudeDir(repoPath string) string {
+	return strings.ReplaceAll(repoPath, "/", "-")
 }

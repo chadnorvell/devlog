@@ -264,6 +264,66 @@ func TestDiscoverProjectsCustomTemplate(t *testing.T) {
 	}
 }
 
+func TestResolveTermGlobDefault(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("DEVLOG_RAW_DIR", tmp)
+
+	cfg := Config{}
+	got := resolveTermGlob(cfg, "2024-01-15", "myproject")
+	want := filepath.Join(tmp, "2024-01-15", "term-myproject*.log")
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestResolveTermGlobCustom(t *testing.T) {
+	cfg := Config{TermPath: "/custom/<date>/terminal-<project>*.txt"}
+	got := resolveTermGlob(cfg, "2024-01-15", "myproject")
+	want := "/custom/2024-01-15/terminal-myproject*.txt"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestResolveClaudeCodeDirDefault(t *testing.T) {
+	cfg := Config{}
+	got := resolveClaudeCodeDir(cfg)
+	home, _ := os.UserHomeDir()
+	want := filepath.Join(home, ".claude", "projects")
+	if got != want {
+		t.Errorf("default: got %q, want %q", got, want)
+	}
+}
+
+func TestResolveClaudeCodeDirCustom(t *testing.T) {
+	custom := "/custom/claude/dir"
+	cfg := Config{ClaudeCodeDir: &custom}
+	got := resolveClaudeCodeDir(cfg)
+	if got != custom {
+		t.Errorf("custom: got %q, want %q", got, custom)
+	}
+}
+
+func TestResolveClaudeCodeDirDisabled(t *testing.T) {
+	empty := ""
+	cfg := Config{ClaudeCodeDir: &empty}
+	got := resolveClaudeCodeDir(cfg)
+	if got != "" {
+		t.Errorf("disabled: got %q, want empty string", got)
+	}
+}
+
+func TestResolveClaudeCodeDirTilde(t *testing.T) {
+	tilde := "~/.claude/custom"
+	cfg := Config{ClaudeCodeDir: &tilde}
+	got := resolveClaudeCodeDir(cfg)
+	home, _ := os.UserHomeDir()
+	want := filepath.Join(home, ".claude", "custom")
+	if got != want {
+		t.Errorf("tilde: got %q, want %q", got, want)
+	}
+}
+
 func TestExtractProjectFromPath(t *testing.T) {
 	tests := []struct {
 		path, tmpl, rawDir, date, want string

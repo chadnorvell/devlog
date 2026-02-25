@@ -13,10 +13,13 @@ done, even if you come back to the project after a long time.
 The tool accomplishes this by:
 
 - Continuously collecting raw data during development: snapshots of code
-  changes and manually logged notes.
+  changes and manually logged notes. It also ingests external data sources
+  like terminal session recordings and Claude Code session logs.
 
-- Storing all raw data in plain text files, timestamped and organized by date
-  and project. This raw data is not intended for human consumption.
+- Storing collected raw data in plain text files, timestamped and organized by
+  date and project. External data sources (terminal logs, Claude Code
+  sessions) are read in place from their original locations. This raw data is
+  not intended for human consumption.
 
 - Using an AI summarizer (defaulting to Claude Code) in headless mode to
   generate a rich, concise summary of the day's work from the raw data.
@@ -42,8 +45,6 @@ The tool accomplishes this by:
   out of scope for the initial implementation.
 
 - GUI note capture. Notes are captured via the terminal only.
-
-- AI interaction logging (e.g., LLM session transcripts). Future work.
 
 ### 1.4 Project standards
 
@@ -255,6 +256,7 @@ raw_dir = ""
 # <date> and <project> variables. Defaults place files in raw_dir.
 git_path = "<raw_dir>/<date>/git-<project>.log"
 notes_path = "<raw_dir>/<date>/notes-<project>.md"
+term_path = "<raw_dir>/<date>/term-<project>*.log"
 
 # Interval in seconds between git diff snapshots. Default: 300 (5 minutes).
 snapshot_interval = 300
@@ -264,18 +266,32 @@ editor = ""
 
 # AI summarizer command. Change this to use other AI tools.
 gen_cmd = "claude -p"
+
+# Directory where Claude Code stores project session logs. Set to "" to
+# disable Claude Code session ingestion. Default: ~/.claude/projects
+claude_code_dir = "~/.claude/projects"
 ```
 
 The configuration file is optional. All values have sensible defaults.
 
-**Path templates**: The `git_path` and `notes_path` settings are path templates
-that control where raw data files are read from and written to. Each template
-must include both `<date>` (substituted with `YYYY-MM-DD`) and `<project>`
-(substituted with the project name) variables. The special `<raw_dir>` variable
-expands to the resolved raw directory. These templates are used uniformly
-throughout the application for writing raw data files, discovering projects, and
-reading data for summary generation — the application never hardcodes "look in
-the raw dir" for file discovery.
+**Path templates**: The `git_path`, `notes_path`, and `term_path` settings are
+path templates that control where raw data files are read from and written to.
+Each template must include both `<date>` (substituted with `YYYY-MM-DD`) and
+`<project>` (substituted with the project name) variables. The special
+`<raw_dir>` variable expands to the resolved raw directory. Templates may
+contain glob wildcard characters (like the `*` in `term_path`) to match multiple
+files for a single project and date.
+
+These templates are used uniformly throughout the application for writing raw
+data files, discovering projects, and reading data for summary generation — the
+application never hardcodes "look in the raw dir" for file discovery.
+
+**Glob-enabled templates**: Templates that contain glob wildcards (such as
+`term_path`) behave slightly differently during project discovery (section 5.3).
+Because the wildcard makes it ambiguous where the project name ends, these
+templates do not contribute to project discovery. They are only used to find
+files for projects already discovered through other templates or the watch list.
+See section 5.3 for details.
 
 ### 3.2 Data directories
 
@@ -310,11 +326,25 @@ stored. Determined by, in order of precedence:
 <raw_dir>/
 └── <YYYY-MM-DD>/
     ├── git-<project>.log
-    └── notes-<project>.md
+    ├── notes-<project>.md
+    └── term-<project>*.log
 ```
 
-These are the default locations. Paths are configurable via the `git_path` and
-`notes_path` templates in `config.toml` (see section 3.1).
+These are the default locations. Paths are configurable via the `git_path`,
+`notes_path`, and `term_path` templates in `config.toml` (see section 3.1).
+
+**Claude Code sessions** (`~/.claude/projects/` by default):
+
+```
+<claude_code_dir>/
+└── -<path-with-slashes-replaced-by-dashes>/
+    ├── <session-uuid>.jsonl
+    ├── <session-uuid>.jsonl
+    └── ...
+```
+
+Claude Code session logs are external to devlog's data directories. They are
+read (not written) during summary generation. See section 4.5.
 
 **Config** (`$XDG_CONFIG_HOME/devlog/`):
 
@@ -438,6 +468,168 @@ At any time, the user can log thoughts via the `devlog` command (see section
 The delimiter line format is `### At HH:MM`. The message text follows
 verbatim (may be multiple lines), terminated by a blank line.
 
+### 4.4 Terminal session logs
+
+Terminal session logs capture terminal input and output recorded during
+development, for example using the Linux `script` command. These logs provide
+insight into what the developer was doing beyond just code changes — running
+tests, reading documentation, debugging, using REPLs, etc.
+
+Terminal logs are **not collected by devlog**. The user is responsible for
+recording them with an external tool (e.g., `script`) and placing them in the
+expected location. Devlog only reads these files during summary generation.
+
+The file path is determined by the `term_path` template (see section 3.1). The
+default template is `<raw_dir>/<date>/term-<project>*.log`. The trailing `*`
+wildcard allows multiple session files per project per day (e.g.,
+`term-devlog-morning.log`, `term-devlog-2.log`). The naming convention after the
+project name is up to the user; devlog matches any suffix.
+
+#### Raw data file format
+
+Terminal logs are plain text as produced by `script` or similar tools. Devlog
+does not impose any internal format — the file contents are passed directly to
+the AI summarizer. They may contain ANSI escape codes, which the summarizer is
+expected to handle gracefully (ignoring them for content extraction).
+
+### 4.5 Claude Code session logs
+
+Claude Code automatically logs all sessions to JSONL files in
+`~/.claude/projects/`. These logs can serve as a rich data source for
+understanding what the developer was working on and trying to accomplish,
+especially when Claude Code is used heavily during development.
+
+**Devlog does not collect or copy these files.** It reads them directly from
+Claude Code's log directory during summary generation and extracts the content
+relevant to the requested date.
+
+#### Log directory structure
+
+Claude Code organizes logs by project. The project directory name is derived
+from the absolute path to the project's working directory, with `/` characters
+replaced by `-`. For example:
+
+| Project path          | Claude Code log directory        |
+|-----------------------|----------------------------------|
+| `/home/chad/dev/ctrl` | `-home-chad-dev-ctrl/`           |
+| `/home/user/work/api` | `-home-user-work-api/`           |
+
+Within each project directory, session files are named `<uuid>.jsonl`, where
+each file contains the full transcript of one Claude Code session. Sessions may
+also have subdirectories (`<uuid>/subagents/`) containing subagent transcripts.
+
+Devlog maps from watched projects to Claude Code log directories using the
+project's `path` field in `state.json`. The path is converted to the directory
+name format by replacing `/` with `-` (e.g., `/home/chad/dev/ctrl` becomes
+`-home-chad-dev-ctrl`). Claude Code session ingestion is only available for
+projects that are in the watch list, because reversing the encoding is ambiguous
+(a `-` could be a path separator or a literal hyphen in a directory name).
+
+#### JSONL entry format
+
+Each line in a session JSONL file is a JSON object with a `type` field. The
+relevant entry types are:
+
+| Type                    | Description                                              |
+|-------------------------|----------------------------------------------------------|
+| `user`                  | A user message or tool result submission                 |
+| `assistant`             | A Claude response (text, tool calls, or thinking)        |
+| `system`                | System/session metadata                                  |
+| `file-history-snapshot` | File state backup (internal bookkeeping)                 |
+| `progress`              | Progress events like hook execution                      |
+
+Every `user` and `assistant` entry has a `timestamp` field in ISO 8601 format
+with millisecond precision (e.g., `2026-02-22T08:15:47.273Z`, always UTC).
+
+**User entries** have a `message` field with `role: "user"` and a `content`
+field that is either a string (the user's prompt) or an array of content blocks
+(typically tool results being returned to the model):
+
+```json
+{"type": "user", "timestamp": "...", "message": {"role": "user", "content": "user prompt text"}, ...}
+{"type": "user", "timestamp": "...", "message": {"role": "user", "content": [{"type": "tool_result", ...}]}, ...}
+```
+
+**Assistant entries** have a `message` field with `role: "assistant"` and a
+`content` array containing blocks of different types:
+
+- `text`: The assistant's text response.
+- `tool_use`: A tool invocation with `name` and `input` fields.
+- `thinking`: The model's extended thinking (internal reasoning, can be very
+  large).
+
+```json
+{"type": "assistant", "timestamp": "...", "message": {"role": "assistant", "content": [
+  {"type": "thinking", "thinking": "..."},
+  {"type": "text", "text": "response text"},
+  {"type": "tool_use", "name": "Edit", "input": {"file_path": "...", ...}}
+]}, ...}
+```
+
+Entries are linked via `parentUuid`/`uuid` fields, forming a thread. The
+`sessionId` field groups all entries in a session.
+
+#### Preprocessing for summary generation
+
+Because the raw JSONL files are large and contain much data that is not useful
+for summarization (thinking blocks, token usage, signatures, file-history
+snapshots), devlog preprocesses them before including the content in the
+summarizer prompt. The preprocessing step:
+
+1. Scans all `*.jsonl` files in the project's Claude Code log directory
+   (ignoring `subagents/` subdirectories).
+
+2. Parses each file line by line. For each entry with a `timestamp` field,
+   checks whether the timestamp falls on the target date (converting from UTC
+   to local time). Entries outside the target date are skipped.
+
+3. If a session has no entries on the target date, it is skipped entirely.
+
+4. For sessions that do have entries on the target date, extracts a compact
+   transcript containing:
+
+   - **User text messages**: The `content` string from user entries (skipping
+     tool-result entries where `content` is an array).
+   - **Assistant text responses**: The `text` field from `text`-type content
+     blocks.
+   - **Tool use summaries**: The tool `name` and a brief summary of the key
+     input parameters (e.g., file paths for `Read`/`Edit`/`Write`, commands for
+     `Bash`, patterns for `Grep`/`Glob`). Full tool inputs and outputs are
+     omitted to keep the prompt manageable.
+   - **Thinking blocks are excluded** entirely (they are large and their
+     reasoning is reflected in the assistant's visible responses).
+
+5. Formats the extracted content as a readable transcript (see below).
+
+#### Preprocessed output format
+
+The preprocessed output for each session is formatted as:
+
+```
+=== SESSION started HH:MM ===
+
+> user prompt text
+
+assistant response text
+
+[Tool: Edit file_path="main.go"]
+[Tool: Bash command="go test ./..."]
+
+> next user prompt
+
+next assistant response
+
+```
+
+The `HH:MM` is the local time of the first entry on the target date.
+User messages are prefixed with `> `. Tool uses are shown as single-line
+summaries in `[Tool: Name key="value"]` format. Assistant text is shown
+verbatim. Entries are separated by blank lines.
+
+If multiple sessions have activity on the target date, they are concatenated
+in chronological order (sorted by the timestamp of their first entry on that
+date).
+
 ## 5. Summary generation
 
 ### 5.1 Invocation
@@ -453,7 +645,9 @@ Before generating, the command checks whether regeneration is needed:
 1. Look for an existing summary at `<log_dir>/<date>.md`.
 2. If it exists, get its mtime.
 3. For each source path template, substitute `<date>` and glob for `<project>`.
-   Collect the max mtime across all matching files.
+   Collect the max mtime across all matching files. Also check the mtime of
+   Claude Code session JSONL files (if `claude_code_dir` is configured) for any
+   projects whose paths map to a Claude Code log directory.
 4. If the summary's mtime is more recent than the max raw data mtime, print
    a message ("Summary is up to date, no new data since last generation") and
    exit without invoking the AI.
@@ -463,21 +657,63 @@ Before generating, the command checks whether regeneration is needed:
 
 The generation process:
 
-1. For each raw data source path template, substitute `<date>` and replace
-   `<project>` with a glob wildcard.
-2. Glob the filesystem. Extract project names from matches using the template
-   as a pattern.
-3. Take the union of project names across all source types.
-4. For each project, resolve all path templates and read whichever files exist.
+1. **Discover projects from non-glob templates**: For each raw data source path
+   template that does not contain literal glob wildcards (`git_path`,
+   `notes_path`), substitute `<date>` and replace `<project>` with a glob
+   wildcard `*`. Glob the filesystem and extract project names from matches
+   using the template as a pattern.
+
+2. **Discover projects from Claude Code sessions**: If `claude_code_dir` is
+   configured, use the watched repos from `state.json` to find Claude Code
+   session directories. For each watched repo, convert its absolute path to
+   the Claude Code directory name format (replace `/` with `-`, e.g.,
+   `/home/chad/dev/ctrl` becomes `-home-chad-dev-ctrl`) and check whether the
+   corresponding directory exists in `claude_code_dir`. If it does, and any
+   JSONL file in that directory contains entries on the target date, add the
+   project to the discovered set using the watched repo's name. (Claude Code
+   discovery is limited to watched projects because reversing the path
+   encoding is ambiguous — a `-` in the directory name could be a path
+   separator or a literal hyphen in a directory name.)
+
+3. Take the union of project names across all discovery methods.
+
+4. For each project:
+   a. Resolve all non-glob path templates and read whichever files exist.
+   b. Resolve glob-enabled templates (like `term_path`) by substituting
+      `<date>` and `<project>` with the known values, then globbing the
+      result. Read all matching files and concatenate their contents.
+   c. If `claude_code_dir` is configured and the project has a known repo path
+      (from `state.json`), run the Claude Code preprocessing step (section
+      4.5) to extract a transcript for the target date.
+
 5. Invoke the AI summarizer per project (section 5.4).
 6. Assemble the per-project summaries into a single Markdown file.
+
+#### Data source availability by project status
+
+The table below summarizes which data sources are available depending on whether
+a project is in the watch list. Important projects should be watched to get full
+coverage. Data collection for unwatched projects is best-effort.
+
+| Data source        | Watched projects | Unwatched projects                        |
+|--------------------|------------------|-------------------------------------------|
+| Git diffs          | Yes (auto)       | No (server collects only watched repos)   |
+| Manual notes       | Yes              | Yes (via `devlog -m -p <project>`)        |
+| Terminal logs      | Yes              | Only if the project is also discovered through another source (e.g., notes) |
+| Claude Code sessions | Yes            | No (requires repo path from watch list)   |
+
+A project appears in a summary if it is discovered through at least one
+discovery-capable source: git diffs, manual notes, or Claude Code sessions. An
+unwatched project with only terminal logs will not be discovered and will not
+appear in the summary.
 
 ### 5.4 AI summarizer invocation
 
 For each project, the tool:
 
 1. Resolves each source path template for this project and reads whichever
-   files exist.
+   files exist. For Claude Code sessions, reads the preprocessed transcript
+   (section 4.5) rather than the raw JSONL files.
 
 2. Assembles the full prompt by substituting the file contents directly into
    the prompt template (see section 5.5).
@@ -534,6 +770,18 @@ Description of data sources:
 - notes-<project>.md: Manually logged notes with timestamps, expressing
   intent, observations, and decisions.
 
+- term-<project>*.log: Terminal session recordings captured with tools like
+  `script`. These show the developer's terminal activity: commands run, test
+  output, debugging sessions, REPL interactions, etc. May contain ANSI escape
+  codes which should be ignored.
+
+- claude-code-sessions.txt: Preprocessed transcripts of Claude Code sessions
+  for the day, showing the developer's interactions with an AI coding
+  assistant. Contains user prompts, assistant responses, and tool use
+  summaries. This reveals what the developer was trying to accomplish, what
+  approaches were discussed, and what changes were made through the AI
+  assistant.
+
 Not all sources may be present. Work with whatever is available.
 
 Task: Write a concise summary of the day's work on this project. The summary
@@ -566,6 +814,20 @@ diff --git a/main.go b/main.go
 --- notes-myproject.md ---
 ### At 10:20
 Starting work on the CLI parser
+
+--- term-myproject-1.log ---
+$ go test ./...
+FAIL    github.com/user/myproject    0.003s
+...
+
+--- claude-code-sessions.txt ---
+=== SESSION started 10:22 ===
+
+> Help me fix the failing test in main_test.go
+
+The test is failing because ...
+[Tool: Read file_path="main_test.go"]
+[Tool: Edit file_path="main.go"]
 ```
 
 ### 5.6 Output format: `<date>.md`
@@ -869,6 +1131,7 @@ devlog/
 ├── state.go               # state.json read/write
 ├── ipc.go                 # IPC request/response types and client helper
 ├── generate.go            # Summary generation: summarizer invocation, prompt assembly
+├── claudecode.go          # Claude Code session log parsing and preprocessing
 ├── krunner.go             # D-Bus KRunner integration (optional)
 ├── org.devlog.krunner.desktop  # KRunner plugin descriptor (install to dbusplugins/)
 ├── flake.nix
@@ -955,9 +1218,17 @@ have subtle bugs:
   `state.json` with and without `--name` overrides.
 
 - **Summary generation** (`generate_test.go`): Test prompt assembly with
-  various combinations of present/absent raw data files. Mock the AI
-  summarizer command (e.g., with a shell script that echoes a canned
-  response) to test the end-to-end flow without making real AI calls.
+  various combinations of present/absent raw data files, including terminal
+  logs and Claude Code sessions. Mock the AI summarizer command (e.g., with a
+  shell script that echoes a canned response) to test the end-to-end flow
+  without making real AI calls.
+
+- **Claude Code preprocessing** (`claudecode_test.go`): Test JSONL parsing
+  with synthetic session files. Test date filtering (entries spanning multiple
+  dates, UTC-to-local conversion). Test extraction of user messages, assistant
+  text, and tool use summaries. Test that thinking blocks, file-history
+  snapshots, and progress entries are excluded. Test the project path to
+  directory name mapping.
 
 Use `t.TempDir()` for all tests that touch the filesystem. Tests should not
 depend on any external state or services.

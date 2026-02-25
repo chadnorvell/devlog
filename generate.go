@@ -38,6 +38,18 @@ Description of data sources:
 - notes-` + project + `.md: Manually logged notes with timestamps, expressing
   intent, observations, and decisions.
 
+- term-` + project + `*.log: Terminal session recordings captured with tools like
+  ` + "`script`" + `. These show the developer's terminal activity: commands run, test
+  output, debugging sessions, REPL interactions, etc. May contain ANSI escape
+  codes which should be ignored.
+
+- claude-code-sessions.txt: Preprocessed transcripts of Claude Code sessions
+  for the day, showing the developer's interactions with an AI coding
+  assistant. Contains user prompts, assistant responses, and tool use
+  summaries. This reveals what the developer was trying to accomplish, what
+  approaches were discussed, and what changes were made through the AI
+  assistant.
+
 Not all sources may be present. Work with whatever is available.
 
 Task: Write a concise summary of the day's work on this project. The summary
@@ -61,7 +73,7 @@ Output only the summary text, nothing else.
 	return b.String()
 }
 
-func generateProjectSummary(cfg Config, project, date string) (string, error) {
+func generateProjectSummary(cfg Config, state State, project, date string) (string, error) {
 	files := make(map[string]string)
 
 	// Check for git log
@@ -74,6 +86,30 @@ func generateProjectSummary(cfg Config, project, date string) (string, error) {
 	notesPath := resolveNotesPath(cfg, date, project)
 	if data, err := os.ReadFile(notesPath); err == nil {
 		files[filepath.Base(notesPath)] = string(data)
+	}
+
+	// Check for terminal logs
+	termPattern := resolveTermGlob(cfg, date, project)
+	if matches, err := filepath.Glob(termPattern); err == nil {
+		for _, m := range matches {
+			if data, err := os.ReadFile(m); err == nil {
+				files[filepath.Base(m)] = string(data)
+			}
+		}
+	}
+
+	// Check for Claude Code sessions
+	claudeDir := resolveClaudeCodeDir(cfg)
+	if claudeDir != "" {
+		for _, w := range state.Watched {
+			if w.Name == project {
+				projDir := filepath.Join(claudeDir, repoPathToClaudeDir(w.Path))
+				if transcript, err := preprocessClaudeCodeSessions(projDir, date, time.Now().Location()); err == nil && transcript != "" {
+					files["claude-code-sessions.txt"] = transcript
+				}
+				break
+			}
+		}
 	}
 
 	if len(files) == 0 {
@@ -100,11 +136,39 @@ func generateProjectSummary(cfg Config, project, date string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func runGen(cfg Config, date string) error {
+func discoverAllProjects(cfg Config, state State, date string) []string {
+	projects := discoverProjects(cfg, date)
+	seen := make(map[string]bool)
+	for _, p := range projects {
+		seen[p] = true
+	}
+
+	claudeDir := resolveClaudeCodeDir(cfg)
+	if claudeDir != "" {
+		loc := time.Now().Location()
+		for _, w := range state.Watched {
+			if seen[w.Name] {
+				continue
+			}
+			projDir := filepath.Join(claudeDir, repoPathToClaudeDir(w.Path))
+			if info, err := os.Stat(projDir); err == nil && info.IsDir() {
+				if hasEntriesOnDate(projDir, date, loc) {
+					projects = append(projects, w.Name)
+					seen[w.Name] = true
+				}
+			}
+		}
+		sort.Strings(projects)
+	}
+
+	return projects
+}
+
+func runGen(cfg Config, state State, date string) error {
 	logDir := resolveLogDir(cfg)
 
-	// Discover projects from raw data
-	projects := discoverProjects(cfg, date)
+	// Discover projects from raw data and Claude Code sessions
+	projects := discoverAllProjects(cfg, state, date)
 	if len(projects) == 0 {
 		fmt.Fprintf(os.Stderr, "No raw data for %s\n", date)
 		return nil
@@ -114,7 +178,7 @@ func runGen(cfg Config, date string) error {
 	summaryPath := filepath.Join(logDir, date+".md")
 	if summaryInfo, err := os.Stat(summaryPath); err == nil {
 		summaryMtime := summaryInfo.ModTime()
-		maxRawMtime := collectRawFileMtime(cfg, date)
+		maxRawMtime := collectRawFileMtime(cfg, state, date)
 		if !maxRawMtime.IsZero() && summaryMtime.After(maxRawMtime) {
 			fmt.Println("Summary is up to date, no new data since last generation")
 			return nil
@@ -140,7 +204,7 @@ func runGen(cfg Config, date string) error {
 	var summaries []projectSummary
 
 	for _, proj := range projects {
-		summary, err := generateProjectSummary(cfg, proj, date)
+		summary, err := generateProjectSummary(cfg, state, proj, date)
 		if err != nil {
 			return fmt.Errorf("generating summary for %s: %w", proj, err)
 		}
@@ -173,8 +237,8 @@ func runGen(cfg Config, date string) error {
 	return nil
 }
 
-func runGenPrompt(cfg Config, date string) error {
-	projects := discoverProjects(cfg, date)
+func runGenPrompt(cfg Config, state State, date string) error {
+	projects := discoverAllProjects(cfg, state, date)
 	if len(projects) == 0 {
 		fmt.Fprintf(os.Stderr, "No raw data for %s\n", date)
 		return nil
@@ -195,6 +259,29 @@ func runGenPrompt(cfg Config, date string) error {
 			files[filepath.Base(notesPath)] = string(data)
 		}
 
+		termPattern := resolveTermGlob(cfg, date, proj)
+		if matches, err := filepath.Glob(termPattern); err == nil {
+			for _, m := range matches {
+				if data, err := os.ReadFile(m); err == nil {
+					files[filepath.Base(m)] = string(data)
+				}
+			}
+		}
+
+		// Check for Claude Code sessions
+		claudeDir := resolveClaudeCodeDir(cfg)
+		if claudeDir != "" {
+			for _, w := range state.Watched {
+				if w.Name == proj {
+					projDir := filepath.Join(claudeDir, repoPathToClaudeDir(w.Path))
+					if transcript, err := preprocessClaudeCodeSessions(projDir, date, time.Now().Location()); err == nil && transcript != "" {
+						files["claude-code-sessions.txt"] = transcript
+					}
+					break
+				}
+			}
+		}
+
 		if len(files) == 0 {
 			continue
 		}
@@ -212,7 +299,7 @@ func runGenPrompt(cfg Config, date string) error {
 	return nil
 }
 
-func collectRawFileMtime(cfg Config, date string) time.Time {
+func collectRawFileMtime(cfg Config, state State, date string) time.Time {
 	rawDir := resolveRawDir(cfg)
 	var maxMtime time.Time
 
@@ -236,6 +323,34 @@ func collectRawFileMtime(cfg Config, date string) time.Time {
 		if info, err := os.Stat(path); err == nil {
 			if info.ModTime().After(maxMtime) {
 				maxMtime = info.ModTime()
+			}
+		}
+	}
+
+	termTmpl := cfg.TermPath
+	if termTmpl == "" {
+		termTmpl = "<raw_dir>/<date>/term-<project>*.log"
+	}
+	for _, path := range globForTemplate(termTmpl, rawDir, date) {
+		if info, err := os.Stat(path); err == nil {
+			if info.ModTime().After(maxMtime) {
+				maxMtime = info.ModTime()
+			}
+		}
+	}
+
+	// Check Claude Code JSONL mtimes
+	claudeDir := resolveClaudeCodeDir(cfg)
+	if claudeDir != "" {
+		for _, w := range state.Watched {
+			projDir := filepath.Join(claudeDir, repoPathToClaudeDir(w.Path))
+			matches, _ := filepath.Glob(filepath.Join(projDir, "*.jsonl"))
+			for _, m := range matches {
+				if info, err := os.Stat(m); err == nil {
+					if info.ModTime().After(maxMtime) {
+						maxMtime = info.ModTime()
+					}
+				}
 			}
 		}
 	}
