@@ -152,6 +152,28 @@ func isValidDate(s string) bool {
 	return err == nil
 }
 
+func cmdGenPrompt() {
+	cfg, err := loadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	date := time.Now().Format("2006-01-02")
+	if len(os.Args) >= 3 && os.Args[1] == "gen-prompt" {
+		date = os.Args[2]
+		if !isValidDate(date) {
+			fmt.Fprintln(os.Stderr, "Error: invalid date format, expected YYYY-MM-DD")
+			os.Exit(1)
+		}
+	}
+
+	if err := runGenPrompt(cfg, date); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
 func cmdWatch() {
 	fs := flag.NewFlagSet("watch", flag.ExitOnError)
 	name := fs.String("name", "", "override project name")

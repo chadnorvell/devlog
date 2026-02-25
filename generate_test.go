@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,6 +66,109 @@ func TestAssemblePromptNotesOnly(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "--- notes-myproject.md ---") {
 		t.Error("prompt should contain notes section")
+	}
+}
+
+func TestRunGenPrompt(t *testing.T) {
+	tmp := t.TempDir()
+	rawDir := filepath.Join(tmp, "raw")
+	t.Setenv("DEVLOG_RAW_DIR", rawDir)
+	t.Setenv("DEVLOG_LOG_DIR", filepath.Join(tmp, "log"))
+
+	date := "2024-01-15"
+	dateDir := filepath.Join(rawDir, date)
+	os.MkdirAll(dateDir, 0o755)
+	os.WriteFile(filepath.Join(dateDir, "git-myproject.log"),
+		[]byte("=== SNAPSHOT 10:00 ===\ndiff content\n"), 0o644)
+	os.WriteFile(filepath.Join(dateDir, "notes-myproject.md"),
+		[]byte("### At 10:20\nStarted work\n"), 0o644)
+
+	// Capture stdout
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	cfg := Config{}
+	err := runGenPrompt(cfg, date)
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out, _ := io.ReadAll(r)
+	s := string(out)
+
+	if !strings.Contains(s, `"myproject"`) {
+		t.Error("output should contain project name")
+	}
+	if !strings.Contains(s, "2024-01-15") {
+		t.Error("output should contain date")
+	}
+	if !strings.Contains(s, "diff content") {
+		t.Error("output should contain git log data")
+	}
+	if !strings.Contains(s, "Started work") {
+		t.Error("output should contain notes data")
+	}
+}
+
+func TestRunGenPromptNoData(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("DEVLOG_RAW_DIR", filepath.Join(tmp, "raw"))
+	t.Setenv("DEVLOG_LOG_DIR", filepath.Join(tmp, "log"))
+
+	cfg := Config{}
+	err := runGenPrompt(cfg, "2024-01-15")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunGenPromptMultipleProjects(t *testing.T) {
+	tmp := t.TempDir()
+	rawDir := filepath.Join(tmp, "raw")
+	t.Setenv("DEVLOG_RAW_DIR", rawDir)
+	t.Setenv("DEVLOG_LOG_DIR", filepath.Join(tmp, "log"))
+
+	date := "2024-01-15"
+	dateDir := filepath.Join(rawDir, date)
+	os.MkdirAll(dateDir, 0o755)
+	os.WriteFile(filepath.Join(dateDir, "git-alpha.log"),
+		[]byte("=== SNAPSHOT 10:00 ===\nalpha diff\n"), 0o644)
+	os.WriteFile(filepath.Join(dateDir, "git-beta.log"),
+		[]byte("=== SNAPSHOT 11:00 ===\nbeta diff\n"), 0o644)
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	cfg := Config{}
+	err := runGenPrompt(cfg, date)
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out, _ := io.ReadAll(r)
+	s := string(out)
+
+	if !strings.Contains(s, "=== alpha ===") {
+		t.Error("output should contain alpha project header")
+	}
+	if !strings.Contains(s, "=== beta ===") {
+		t.Error("output should contain beta project header")
+	}
+	if !strings.Contains(s, "alpha diff") {
+		t.Error("output should contain alpha data")
+	}
+	if !strings.Contains(s, "beta diff") {
+		t.Error("output should contain beta data")
 	}
 }
 

@@ -345,7 +345,7 @@ For example, the repo at `/home/chad/dev/devlog` has the default project name
 `devlog`.
 
 The project name can be overridden with the `--name` flag on the `watch`
-command (see section 6.3). This allows watching two repos that have the same
+command (see section 6.4). This allows watching two repos that have the same
 directory basename — e.g., `devlog watch /home/chad/work/foo --name work-foo`.
 
 **Collision handling**: If a `watch` command would result in two watched repos
@@ -646,7 +646,30 @@ Generate a summary for `<date>` (default: today).
 
 **Does not require a running server.**
 
-### 6.3 `devlog watch [<path>] [--name <name>]`
+### 6.3 `devlog gen-prompt [<date>]`
+
+Print the prompt that will be used to generate the summary for `<date>`
+(default: today).
+
+**Behavior**:
+
+1. Validate date format if provided (must be `YYYY-MM-DD`). If invalid, print
+   an error and exit 1.
+2. Discover projects using the template-based method described in section 5.3
+   (substitute `<date>`, glob for `<project>`). If no files match any template,
+   print "No raw data for <date>" and exit 0.
+3. For each project, assemble the prompt (section 5.5) from whichever raw data
+   files exist.
+4. Print the assembled prompt to `stdout`.
+
+This can be used to inspect the data and prompt that `devlog gen` would send to
+the AI summarizer. Unlike `gen`, this command does not perform a staleness
+check — it always assembles and prints the prompt, even if the summary is
+already up to date.
+
+**Does not require a running server.**
+
+### 6.4 `devlog watch [<path>] [--name <name>]`
 
 Start watching a git repository.
 
@@ -684,7 +707,7 @@ exit 1.
 
 **Does not require a running server.**
 
-### 6.4 `devlog unwatch [<path>]`
+### 6.5 `devlog unwatch [<path>]`
 
 Stop watching a git repository.
 
@@ -707,7 +730,7 @@ Stop watching a git repository.
 
 **Does not require a running server.**
 
-### 6.5 `devlog start`
+### 6.6 `devlog start`
 
 Start the devlog server in the foreground.
 
@@ -752,7 +775,7 @@ ticker, and the D-Bus listener (if active). Protect it with a `sync.RWMutex`:
 the snapshot ticker and D-Bus listener take a read lock; watch/unwatch commands
 take a write lock.
 
-### 6.6 `devlog stop`
+### 6.7 `devlog stop`
 
 Stop the running devlog server.
 
@@ -765,7 +788,7 @@ Stop the running devlog server.
    timeout of 5 seconds).
 4. Print "devlog server stopped."
 
-### 6.7 `devlog status`
+### 6.8 `devlog status`
 
 Print the current server status.
 
@@ -867,6 +890,8 @@ func main() {
     switch os.Args[1] {
     case "gen":
         cmdGen()
+    case "gen-prompt":
+        cmdGenPrompt()
     case "watch":
         cmdWatch()
     case "unwatch":

@@ -173,6 +173,45 @@ func runGen(cfg Config, date string) error {
 	return nil
 }
 
+func runGenPrompt(cfg Config, date string) error {
+	projects := discoverProjects(cfg, date)
+	if len(projects) == 0 {
+		fmt.Fprintf(os.Stderr, "No raw data for %s\n", date)
+		return nil
+	}
+
+	multi := len(projects) > 1
+
+	for i, proj := range projects {
+		files := make(map[string]string)
+
+		gitPath := resolveGitPath(cfg, date, proj)
+		if data, err := os.ReadFile(gitPath); err == nil {
+			files[filepath.Base(gitPath)] = string(data)
+		}
+
+		notesPath := resolveNotesPath(cfg, date, proj)
+		if data, err := os.ReadFile(notesPath); err == nil {
+			files[filepath.Base(notesPath)] = string(data)
+		}
+
+		if len(files) == 0 {
+			continue
+		}
+
+		if multi {
+			if i > 0 {
+				fmt.Println()
+			}
+			fmt.Printf("=== %s ===\n", proj)
+		}
+
+		fmt.Print(assemblePrompt(proj, date, files))
+	}
+
+	return nil
+}
+
 func collectRawFileMtime(cfg Config, date string) time.Time {
 	rawDir := resolveRawDir(cfg)
 	var maxMtime time.Time

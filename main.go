@@ -10,6 +10,8 @@ func main() {
 	switch os.Args[1] {
 	case "gen":
 		cmdGen()
+	case "gen-prompt":
+		cmdGenPrompt()
 	case "watch":
 		cmdWatch()
 	case "unwatch":
