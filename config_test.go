@@ -21,6 +21,9 @@ func TestLoadConfigMissing(t *testing.T) {
 	if cfg.LogDir != "" {
 		t.Errorf("expected empty LogDir, got %q", cfg.LogDir)
 	}
+	if cfg.CompCmd != "gemini --model gemini-3-flash" {
+		t.Errorf("expected default CompCmd %q, got %q", "gemini --model gemini-3-flash", cfg.CompCmd)
+	}
 }
 
 func TestLoadConfigPartial(t *testing.T) {

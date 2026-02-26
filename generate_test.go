@@ -11,8 +11,8 @@ import (
 
 func TestAssemblePrompt(t *testing.T) {
 	files := map[string]string{
-		"git-myproject.log": "=== SNAPSHOT 10:15 ===\ndiff content\n",
-		"notes.md":          "### At 10:20 #myproject\nStarted work\n",
+		"comp-git-myproject.md": "Compressed git summary\n",
+		"notes.md":              "### At 10:20 #myproject\nStarted work\n",
 	}
 
 	prompt := assemblePrompt("myproject", "2024-01-15", files)
@@ -28,26 +28,34 @@ func TestAssemblePrompt(t *testing.T) {
 	}
 
 	// Check file sections
-	if !strings.Contains(prompt, "--- git-myproject.log ---") {
-		t.Error("prompt should contain git log section")
+	if !strings.Contains(prompt, "--- comp-git-myproject.md ---") {
+		t.Error("prompt should contain compressed git section")
 	}
 	if !strings.Contains(prompt, "--- notes.md ---") {
 		t.Error("prompt should contain notes section")
 	}
-	if !strings.Contains(prompt, "diff content") {
+	if !strings.Contains(prompt, "Compressed git summary") {
 		t.Error("prompt should contain file contents")
+	}
+
+	// Check updated descriptions
+	if !strings.Contains(prompt, "comp-git-myproject.md: AI-compressed summary of time-stamped snapshots") {
+		t.Error("prompt should contain compressed git description")
+	}
+	if !strings.Contains(prompt, "Below is the data collected") {
+		t.Error("prompt should use updated preamble")
 	}
 }
 
 func TestAssemblePromptGitOnly(t *testing.T) {
 	files := map[string]string{
-		"git-myproject.log": "=== SNAPSHOT 10:15 ===\ndiff content\n",
+		"comp-git-myproject.md": "Compressed git summary\n",
 	}
 
 	prompt := assemblePrompt("myproject", "2024-01-15", files)
 
-	if !strings.Contains(prompt, "--- git-myproject.log ---") {
-		t.Error("prompt should contain git log section")
+	if !strings.Contains(prompt, "--- comp-git-myproject.md ---") {
+		t.Error("prompt should contain compressed git section")
 	}
 	if strings.Contains(prompt, "--- notes.md ---") {
 		t.Error("prompt should NOT contain notes section when notes don't exist")
@@ -107,11 +115,56 @@ func TestRunGenPrompt(t *testing.T) {
 	if !strings.Contains(s, "2024-01-15") {
 		t.Error("output should contain date")
 	}
+	// Without comp files, falls back to raw git data
 	if !strings.Contains(s, "diff content") {
-		t.Error("output should contain git log data")
+		t.Error("output should contain git log data (raw fallback)")
 	}
 	if !strings.Contains(s, "Started work") {
 		t.Error("output should contain notes data")
+	}
+}
+
+func TestRunGenPromptWithCompFiles(t *testing.T) {
+	tmp := t.TempDir()
+	rawDir := filepath.Join(tmp, "raw")
+	t.Setenv("DEVLOG_RAW_DIR", rawDir)
+	t.Setenv("DEVLOG_LOG_DIR", filepath.Join(tmp, "log"))
+
+	date := "2024-01-15"
+	dateDir := filepath.Join(rawDir, date)
+	os.MkdirAll(dateDir, 0o755)
+
+	// Create both raw and comp files
+	os.WriteFile(filepath.Join(dateDir, "git-myproject.log"),
+		[]byte("=== SNAPSHOT 10:00 ===\nraw diff content\n"), 0o644)
+	os.WriteFile(filepath.Join(dateDir, "comp-git-myproject.md"),
+		[]byte("Compressed git summary"), 0o644)
+	os.WriteFile(filepath.Join(dateDir, "notes.md"),
+		[]byte("### At 10:20 #myproject\nStarted work\n"), 0o644)
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	cfg := Config{}
+	err := runGenPrompt(cfg, State{}, date)
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out, _ := io.ReadAll(r)
+	s := string(out)
+
+	// Should use comp file, not raw
+	if !strings.Contains(s, "Compressed git summary") {
+		t.Error("output should contain compressed git data")
+	}
+	if strings.Contains(s, "raw diff content") {
+		t.Error("output should NOT contain raw git data when comp file exists")
 	}
 }
 
@@ -226,11 +279,13 @@ func TestRunGenWithMockSummarizer(t *testing.T) {
 	t.Setenv("DEVLOG_RAW_DIR", rawDir)
 	t.Setenv("DEVLOG_LOG_DIR", logDir)
 
-	// Create a mock summarizer script
+	// Create mock summarizer and compressor scripts
 	mockBin := filepath.Join(tmp, "bin")
 	os.MkdirAll(mockBin, 0o755)
 	mockSummarizer := filepath.Join(mockBin, "mysummarizer")
 	os.WriteFile(mockSummarizer, []byte("#!/bin/sh\necho 'This is a test summary.'\n"), 0o755)
+	mockCompressor := filepath.Join(mockBin, "mycompressor")
+	os.WriteFile(mockCompressor, []byte("#!/bin/sh\necho 'Compressed data.'\n"), 0o755)
 	t.Setenv("PATH", mockBin+":"+os.Getenv("PATH"))
 
 	date := "2024-01-15"
@@ -240,7 +295,8 @@ func TestRunGenWithMockSummarizer(t *testing.T) {
 		[]byte("=== SNAPSHOT 10:00 ===\ndiff content\n\n"), 0o644)
 
 	cfg := Config{
-		GenCmd: "mysummarizer",
+		GenCmd:  "mysummarizer",
+		CompCmd: "mycompressor",
 	}
 	err := runGen(cfg, State{}, date)
 	if err != nil {
@@ -267,20 +323,20 @@ func TestRunGenWithMockSummarizer(t *testing.T) {
 
 func TestAssemblePromptWithTermLog(t *testing.T) {
 	files := map[string]string{
-		"git-myproject.log":      "=== SNAPSHOT 10:15 ===\ndiff content\n",
-		"term-myproject-1.log":   "$ go test ./...\nPASS\n",
+		"comp-git-myproject.md":  "Compressed git summary\n",
+		"comp-term-myproject.md": "Compressed term summary with go test\n",
 	}
 
 	prompt := assemblePrompt("myproject", "2024-01-15", files)
 
-	if !strings.Contains(prompt, "--- term-myproject-1.log ---") {
-		t.Error("prompt should contain terminal log section")
+	if !strings.Contains(prompt, "--- comp-term-myproject.md ---") {
+		t.Error("prompt should contain compressed terminal section")
 	}
 	if !strings.Contains(prompt, "go test") {
-		t.Error("prompt should contain terminal log contents")
+		t.Error("prompt should contain compressed terminal contents")
 	}
-	if !strings.Contains(prompt, "term-myproject*.log") {
-		t.Error("prompt should describe terminal log data source")
+	if !strings.Contains(prompt, "comp-term-myproject.md: AI-compressed summary of terminal session") {
+		t.Error("prompt should describe compressed terminal data source")
 	}
 }
 
@@ -494,20 +550,20 @@ func TestRunGenPromptWithClaudeCode(t *testing.T) {
 
 func TestAssemblePromptWithClaudeCode(t *testing.T) {
 	files := map[string]string{
-		"git-myproject.log":        "=== SNAPSHOT 10:15 ===\ndiff content\n",
-		"claude-code-sessions.txt": "=== SESSION started 10:22 ===\n\n> Help me fix the test\n\nThe test fails because...\n",
+		"comp-git-myproject.md":    "Compressed git summary\n",
+		"comp-claude-myproject.md": "Compressed Claude summary about fixing tests\n",
 	}
 
 	prompt := assemblePrompt("myproject", "2024-06-15", files)
 
-	if !strings.Contains(prompt, "--- claude-code-sessions.txt ---") {
-		t.Error("prompt should contain Claude Code sessions section")
+	if !strings.Contains(prompt, "--- comp-claude-myproject.md ---") {
+		t.Error("prompt should contain compressed Claude Code section")
 	}
-	if !strings.Contains(prompt, "Help me fix the test") {
-		t.Error("prompt should contain Claude Code session content")
+	if !strings.Contains(prompt, "fixing tests") {
+		t.Error("prompt should contain compressed Claude Code content")
 	}
-	if !strings.Contains(prompt, "claude-code-sessions.txt: Preprocessed transcripts") {
-		t.Error("prompt should contain Claude Code data source description")
+	if !strings.Contains(prompt, "comp-claude-myproject.md: AI-compressed summary of Claude Code session") {
+		t.Error("prompt should contain compressed Claude Code data source description")
 	}
 }
 
@@ -613,6 +669,123 @@ func TestRunGenPromptGeneral(t *testing.T) {
 	}
 	if !strings.Contains(s, "A general note") {
 		t.Error("output should contain the unaffiliated note")
+	}
+}
+
+func TestAssembleCompPrompt(t *testing.T) {
+	files := map[string]string{
+		"git-myproject.log": "=== SNAPSHOT 10:15 ===\ndiff content\n",
+	}
+
+	for _, tc := range []struct {
+		dataType string
+		wantDesc string
+	}{
+		{"git", "Time-stamped snapshots of uncommitted code changes"},
+		{"term", "Terminal session recordings captured with tools like"},
+		{"claude", "Preprocessed transcripts of Claude Code sessions"},
+	} {
+		t.Run(tc.dataType, func(t *testing.T) {
+			prompt := assembleCompPrompt(tc.dataType, files)
+
+			if !strings.Contains(prompt, tc.wantDesc) {
+				t.Errorf("prompt should contain %q description", tc.dataType)
+			}
+			if !strings.Contains(prompt, "--- git-myproject.log ---") {
+				t.Error("prompt should contain file section")
+			}
+			if !strings.Contains(prompt, "high fidelity\ncompression") {
+				t.Error("prompt should contain compression task")
+			}
+			if !strings.Contains(prompt, "Correlate summarized events by timestamp") {
+				t.Error("prompt should contain timestamp guideline")
+			}
+		})
+	}
+}
+
+func TestCompressData(t *testing.T) {
+	tmp := t.TempDir()
+	rawDir := filepath.Join(tmp, "raw")
+	t.Setenv("DEVLOG_RAW_DIR", rawDir)
+
+	date := "2024-01-15"
+	dateDir := filepath.Join(rawDir, date)
+	os.MkdirAll(dateDir, 0o755)
+
+	// Create mock compressor
+	mockBin := filepath.Join(tmp, "bin")
+	os.MkdirAll(mockBin, 0o755)
+	mockComp := filepath.Join(mockBin, "mockcomp")
+	os.WriteFile(mockComp, []byte("#!/bin/sh\necho 'Compressed output.'\n"), 0o755)
+	t.Setenv("PATH", mockBin+":"+os.Getenv("PATH"))
+
+	// Create source file
+	srcPath := filepath.Join(dateDir, "git-proj.log")
+	os.WriteFile(srcPath, []byte("diff data"), 0o644)
+
+	cfg := Config{CompCmd: "mockcomp"}
+	files := map[string]string{"git-proj.log": "diff data"}
+
+	result, err := compressData(cfg, "git", "proj", date, files, []string{srcPath})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "Compressed output." {
+		t.Errorf("expected %q, got %q", "Compressed output.", result)
+	}
+
+	// Verify comp file was written
+	compPath := filepath.Join(dateDir, "comp-git-proj.md")
+	data, err := os.ReadFile(compPath)
+	if err != nil {
+		t.Fatalf("comp file should exist: %v", err)
+	}
+	if string(data) != "Compressed output." {
+		t.Errorf("comp file content: got %q, want %q", string(data), "Compressed output.")
+	}
+}
+
+func TestCompressDataCaching(t *testing.T) {
+	tmp := t.TempDir()
+	rawDir := filepath.Join(tmp, "raw")
+	t.Setenv("DEVLOG_RAW_DIR", rawDir)
+
+	date := "2024-01-15"
+	dateDir := filepath.Join(rawDir, date)
+	os.MkdirAll(dateDir, 0o755)
+
+	// Create source file with old timestamp
+	srcPath := filepath.Join(dateDir, "git-proj.log")
+	os.WriteFile(srcPath, []byte("diff data"), 0o644)
+	past := time.Now().Add(-1 * time.Hour)
+	os.Chtimes(srcPath, past, past)
+
+	// Create comp file with newer timestamp
+	compPath := filepath.Join(dateDir, "comp-git-proj.md")
+	os.WriteFile(compPath, []byte("Cached compressed data"), 0o644)
+
+	// Use a nonexistent command — if caching works, it won't be invoked
+	cfg := Config{CompCmd: "nonexistent-command-that-should-not-run"}
+	files := map[string]string{"git-proj.log": "diff data"}
+
+	result, err := compressData(cfg, "git", "proj", date, files, []string{srcPath})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "Cached compressed data" {
+		t.Errorf("expected cached data, got %q", result)
+	}
+}
+
+func TestCompressDataNoFiles(t *testing.T) {
+	cfg := Config{CompCmd: "anything"}
+	result, err := compressData(cfg, "git", "proj", "2024-01-15", map[string]string{}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "" {
+		t.Errorf("expected empty string, got %q", result)
 	}
 }
 

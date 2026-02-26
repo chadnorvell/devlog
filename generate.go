@@ -52,7 +52,7 @@ func assemblePrompt(project, date string, files map[string]string) string {
 
 	fmt.Fprintf(&b, "You are summarizing a day of software engineering work on the project\n"+
 		"%q for the date %s.\n\n"+
-		"Below is the raw data collected during the day.\n", project, date)
+		"Below is the data collected during the day.\n", project, date)
 
 	// Sort filenames for deterministic output
 	names := make([]string, 0, len(files))
@@ -72,21 +72,18 @@ Description of data sources:
   developer notes expressing intent, observations, and decisions. They can
   also be snippets captured from code, docs, the web, or terminal sessions.
 
-- git-` + project + `.log: Time-stamped snapshots of uncommitted code changes,
-  taken every 5 minutes. These show the evolution of the code over the day,
-  including approaches that were tried and abandoned.
+- comp-git-` + project + `.md: AI-compressed summary of time-stamped snapshots of
+  uncommitted code changes, taken every 5 minutes. Describes the evolution of
+  the code over the day, including approaches that were tried and abandoned.
 
-- term-` + project + `*.log: Terminal session recordings captured with tools like
-  ` + "`script`" + `. These show the developer's terminal activity: commands run, test
-  output, debugging sessions, REPL interactions, etc. May contain ANSI escape
-  codes which should be ignored.
+- comp-term-` + project + `.md: AI-compressed summary of terminal session
+  recordings. Describes the developer's terminal activity: commands run, test
+  output, debugging sessions, REPL interactions, etc.
 
-- claude-code-sessions.txt: Preprocessed transcripts of Claude Code sessions
-  for the day, showing the developer's interactions with an AI coding
-  assistant. Contains user prompts, assistant responses, and tool use
-  summaries. This reveals what the developer was trying to accomplish, what
-  approaches were discussed, and what changes were made through the AI
-  assistant.
+- comp-claude-` + project + `.md: AI-compressed summary of Claude Code session
+  transcripts for the day. Describes the developer's interactions with an AI
+  coding assistant, what the developer was trying to accomplish, what
+  approaches were discussed, and what changes were made.
 
 Not all sources may be present. Work with whatever is available.
 
@@ -111,16 +108,134 @@ Output only the summary text, nothing else.
 	return b.String()
 }
 
+func assembleCompPrompt(dataType string, files map[string]string) string {
+	var b strings.Builder
+
+	b.WriteString("You are summarizing data automatically logged during a software engineering\nsession.\n\nDescription of the data:\n\n")
+
+	switch dataType {
+	case "git":
+		b.WriteString("- Time-stamped snapshots of uncommitted code changes, taken every 5 minutes.\n" +
+			"  These show the evolution of the code over the day, including approaches that\n" +
+			"  were tried and abandoned.\n")
+	case "term":
+		b.WriteString("- Terminal session recordings captured with tools like `script`. These show the\n" +
+			"  developer's terminal activity: commands run, test output, debugging sessions,\n" +
+			"  REPL interactions, etc. May contain ANSI escape codes which should be\n" +
+			"  ignored.\n")
+	case "claude":
+		b.WriteString("- Preprocessed transcripts of Claude Code sessions for the day, showing the\n" +
+			"  developer's interactions with an AI coding assistant. Contains user prompts,\n" +
+			"  assistant responses, and tool use summaries. This reveals what the developer\n" +
+			"  was trying to accomplish, what approaches were discussed, and what changes\n" +
+			"  were made through the AI assistant.\n")
+	}
+
+	b.WriteString("\nBelow is the raw data collected during the day.\n")
+
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		fmt.Fprintf(&b, "\n--- %s ---\n%s\n", name, files[name])
+	}
+
+	b.WriteString(`
+Task: Write a concise summary of the work done in the logs, such that someone
+could read the summary and have a complete understanding without reading the
+raw data at all. In other words, the summary should be a high fidelity
+compression of the raw data.
+
+Guidelines:
+- Describe what was being worked on and why.
+- Explain the approaches tried, including dead ends and pivots. Explain what
+  went wrong and what eventually worked.
+- Correlate summarized events by timestamp or timestamp range.
+
+Output only the summary text, nothing else.
+`)
+
+	return b.String()
+}
+
+func compressData(cfg Config, dataType, project, date string, files map[string]string, sourcePaths []string) (string, error) {
+	if len(files) == 0 {
+		return "", nil
+	}
+
+	rawDir := resolveRawDir(cfg)
+	outPath := filepath.Join(rawDir, date, "comp-"+dataType+"-"+project+".md")
+
+	// Staleness check: if output exists and is newer than all sources, use cache
+	if outInfo, err := os.Stat(outPath); err == nil {
+		outMtime := outInfo.ModTime()
+		fresh := true
+		for _, sp := range sourcePaths {
+			if info, err := os.Stat(sp); err == nil {
+				if info.ModTime().After(outMtime) {
+					fresh = false
+					break
+				}
+			}
+		}
+		if fresh {
+			data, err := os.ReadFile(outPath)
+			if err != nil {
+				return "", err
+			}
+			return strings.TrimSpace(string(data)), nil
+		}
+	}
+
+	prompt := assembleCompPrompt(dataType, files)
+
+	args := strings.Fields(cfg.CompCmd)
+	if len(args) == 0 {
+		return "", fmt.Errorf("comp_cmd is empty")
+	}
+
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stdin = strings.NewReader(prompt)
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("%s failed: %s", args[0], string(exitErr.Stderr))
+		}
+		return "", fmt.Errorf("running %s: %w", args[0], err)
+	}
+
+	result := strings.TrimSpace(string(out))
+
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		return "", fmt.Errorf("creating comp dir: %w", err)
+	}
+	if err := os.WriteFile(outPath, []byte(result), 0o644); err != nil {
+		return "", fmt.Errorf("writing comp file: %w", err)
+	}
+
+	return result, nil
+}
+
 func generateProjectSummary(cfg Config, state State, project, date string) (string, error) {
 	files := make(map[string]string)
 
-	// Check for git log
+	// Collect and compress git data
 	gitPath := resolveGitPath(cfg, date, project)
 	if data, err := os.ReadFile(gitPath); err == nil {
-		files[filepath.Base(gitPath)] = string(data)
+		gitFiles := map[string]string{filepath.Base(gitPath): string(data)}
+		compressed, err := compressData(cfg, "git", project, date, gitFiles, []string{gitPath})
+		if err != nil {
+			return "", fmt.Errorf("compressing git data: %w", err)
+		}
+		if compressed != "" {
+			files["comp-git-"+project+".md"] = compressed
+		}
 	}
 
-	// Check for notes
+	// Check for notes (no compression)
 	notesPath := resolveNotesPath(cfg, date)
 	if data, err := os.ReadFile(notesPath); err == nil {
 		var filtered string
@@ -134,24 +249,43 @@ func generateProjectSummary(cfg Config, state State, project, date string) (stri
 		}
 	}
 
-	// Check for terminal logs
+	// Collect and compress terminal logs
 	termPattern := resolveTermGlob(cfg, date, project)
-	if matches, err := filepath.Glob(termPattern); err == nil {
+	if matches, err := filepath.Glob(termPattern); err == nil && len(matches) > 0 {
+		termFiles := make(map[string]string)
+		var termSourcePaths []string
 		for _, m := range matches {
 			if data, err := os.ReadFile(m); err == nil {
-				files[filepath.Base(m)] = string(data)
+				termFiles[filepath.Base(m)] = string(data)
+				termSourcePaths = append(termSourcePaths, m)
 			}
+		}
+		compressed, err := compressData(cfg, "term", project, date, termFiles, termSourcePaths)
+		if err != nil {
+			return "", fmt.Errorf("compressing term data: %w", err)
+		}
+		if compressed != "" {
+			files["comp-term-"+project+".md"] = compressed
 		}
 	}
 
-	// Check for Claude Code sessions
+	// Collect and compress Claude Code sessions
 	claudeDir := resolveClaudeCodeDir(cfg)
 	if claudeDir != "" {
 		for _, w := range state.Watched {
 			if w.Name == project {
 				projDir := filepath.Join(claudeDir, repoPathToClaudeDir(w.Path))
 				if transcript, err := preprocessClaudeCodeSessions(projDir, date, time.Now().Location()); err == nil && transcript != "" {
-					files["claude-code-sessions.txt"] = transcript
+					// Find JSONL source files for staleness check
+					jsonlMatches, _ := filepath.Glob(filepath.Join(projDir, "*.jsonl"))
+					claudeFiles := map[string]string{"claude-code-sessions.txt": transcript}
+					compressed, err := compressData(cfg, "claude", project, date, claudeFiles, jsonlMatches)
+					if err != nil {
+						return "", fmt.Errorf("compressing claude data: %w", err)
+					}
+					if compressed != "" {
+						files["comp-claude-"+project+".md"] = compressed
+					}
 				}
 				break
 			}
@@ -242,6 +376,15 @@ func runGen(cfg Config, state State, date string) error {
 		return fmt.Errorf("summarizer command %q not found on $PATH", args[0])
 	}
 
+	// Check compressor is available
+	compArgs := strings.Fields(cfg.CompCmd)
+	if len(compArgs) == 0 {
+		return fmt.Errorf("comp_cmd is empty")
+	}
+	if _, err := exec.LookPath(compArgs[0]); err != nil {
+		return fmt.Errorf("compressor command %q not found on $PATH", compArgs[0])
+	}
+
 	// Generate summary for each project
 	type projectSummary struct {
 		name    string
@@ -324,13 +467,21 @@ func runGenPrompt(cfg Config, state State, date string) error {
 
 	multi := len(allProjects) > 1
 
+	rawDir := resolveRawDir(cfg)
+
 	for i, proj := range allProjects {
 		files := make(map[string]string)
 
 		if proj != "general" {
-			gitPath := resolveGitPath(cfg, date, proj)
-			if data, err := os.ReadFile(gitPath); err == nil {
-				files[filepath.Base(gitPath)] = string(data)
+			// Prefer compressed git data; fall back to raw
+			compGitPath := filepath.Join(rawDir, date, "comp-git-"+proj+".md")
+			if data, err := os.ReadFile(compGitPath); err == nil {
+				files["comp-git-"+proj+".md"] = string(data)
+			} else {
+				gitPath := resolveGitPath(cfg, date, proj)
+				if data, err := os.ReadFile(gitPath); err == nil {
+					files[filepath.Base(gitPath)] = string(data)
+				}
 			}
 		}
 
@@ -347,25 +498,36 @@ func runGenPrompt(cfg Config, state State, date string) error {
 		}
 
 		if proj != "general" {
-			termPattern := resolveTermGlob(cfg, date, proj)
-			if matches, err := filepath.Glob(termPattern); err == nil {
-				for _, m := range matches {
-					if data, err := os.ReadFile(m); err == nil {
-						files[filepath.Base(m)] = string(data)
+			// Prefer compressed term data; fall back to raw
+			compTermPath := filepath.Join(rawDir, date, "comp-term-"+proj+".md")
+			if data, err := os.ReadFile(compTermPath); err == nil {
+				files["comp-term-"+proj+".md"] = string(data)
+			} else {
+				termPattern := resolveTermGlob(cfg, date, proj)
+				if matches, err := filepath.Glob(termPattern); err == nil {
+					for _, m := range matches {
+						if data, err := os.ReadFile(m); err == nil {
+							files[filepath.Base(m)] = string(data)
+						}
 					}
 				}
 			}
 
-			// Check for Claude Code sessions
-			claudeDir := resolveClaudeCodeDir(cfg)
-			if claudeDir != "" {
-				for _, w := range state.Watched {
-					if w.Name == proj {
-						projDir := filepath.Join(claudeDir, repoPathToClaudeDir(w.Path))
-						if transcript, err := preprocessClaudeCodeSessions(projDir, date, time.Now().Location()); err == nil && transcript != "" {
-							files["claude-code-sessions.txt"] = transcript
+			// Prefer compressed Claude data; fall back to raw
+			compClaudePath := filepath.Join(rawDir, date, "comp-claude-"+proj+".md")
+			if data, err := os.ReadFile(compClaudePath); err == nil {
+				files["comp-claude-"+proj+".md"] = string(data)
+			} else {
+				claudeDir := resolveClaudeCodeDir(cfg)
+				if claudeDir != "" {
+					for _, w := range state.Watched {
+						if w.Name == proj {
+							projDir := filepath.Join(claudeDir, repoPathToClaudeDir(w.Path))
+							if transcript, err := preprocessClaudeCodeSessions(projDir, date, time.Now().Location()); err == nil && transcript != "" {
+								files["claude-code-sessions.txt"] = transcript
+							}
+							break
 						}
-						break
 					}
 				}
 			}

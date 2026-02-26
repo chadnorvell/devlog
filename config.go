@@ -21,6 +21,7 @@ type Config struct {
 	SnapshotInterval int    `toml:"snapshot_interval"`
 	Editor           string `toml:"editor"`
 	GenCmd           string `toml:"gen_cmd"`
+	CompCmd          string `toml:"comp_cmd"`
 	GitPath          string `toml:"git_path"`
 	NotesPath        string `toml:"notes_path"`
 	TermPath         string `toml:"term_path"`
@@ -39,6 +40,7 @@ func loadConfig() (Config, error) {
 	cfg := Config{
 		SnapshotInterval: 300,
 		GenCmd:           "claude -p",
+		CompCmd:          "gemini --model gemini-3-flash",
 	}
 
 	path := configFilePath()
