@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -166,12 +168,12 @@ func resolveGitPath(cfg Config, date, project string) string {
 	return resolvePathTemplate(tmpl, resolveRawDir(cfg), date, project)
 }
 
-func resolveNotesPath(cfg Config, date, project string) string {
+func resolveNotesPath(cfg Config, date string) string {
 	tmpl := cfg.NotesPath
 	if tmpl == "" {
-		tmpl = "<raw_dir>/<date>/notes-<project>.md"
+		tmpl = "<raw_dir>/<date>/notes.md"
 	}
-	return resolvePathTemplate(tmpl, resolveRawDir(cfg), date, project)
+	return resolvePathTemplate(tmpl, resolveRawDir(cfg), date, "")
 }
 
 func resolveTermGlob(cfg Config, date, project string) string {
@@ -196,13 +198,33 @@ func discoverProjects(cfg Config, date string) []string {
 		}
 	}
 
-	notesTmpl := cfg.NotesPath
-	if notesTmpl == "" {
-		notesTmpl = "<raw_dir>/<date>/notes-<project>.md"
+	for _, p := range discoverProjectsFromNotes(cfg, date) {
+		seen[p] = true
 	}
-	for _, path := range globForTemplate(notesTmpl, rawDir, date) {
-		if p := extractProjectFromPath(path, notesTmpl, rawDir, date); p != "" {
-			seen[p] = true
+
+	projects := make([]string, 0, len(seen))
+	for p := range seen {
+		projects = append(projects, p)
+	}
+	sort.Strings(projects)
+	return projects
+}
+
+var notesHeadingRe = regexp.MustCompile(`^### At \d{2}:\d{2}\s+#(\S+)`)
+
+func discoverProjectsFromNotes(cfg Config, date string) []string {
+	path := resolveNotesPath(cfg, date)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	seen := make(map[string]bool)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		if m := notesHeadingRe.FindStringSubmatch(scanner.Text()); m != nil {
+			seen[m[1]] = true
 		}
 	}
 

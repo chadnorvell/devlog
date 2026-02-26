@@ -13,8 +13,8 @@ done, even if you come back to the project after a long time.
 The tool accomplishes this by:
 
 - Continuously collecting raw data during development: snapshots of code
-  changes and manually logged notes. It also ingests external data sources
-  like terminal session recordings and Claude Code session logs.
+  changes and manually logged notes/snippets. It also ingests external data
+  sources like terminal session recordings and Claude Code session logs.
 
 - Storing collected raw data in plain text files, timestamped and organized by
   date and project. External data sources (terminal logs, Claude Code
@@ -252,10 +252,16 @@ log_dir = ""
 # Default: $XDG_DATA_HOME/devlog/raw (typically ~/.local/share/devlog/raw)
 raw_dir = ""
 
+# Path template for the notes file. Unlike the other path templates, this
+# one does not include a <project> variable — there is a single notes file
+# per day, with project associations indicated by hashtags in the headings
+# (see section 4.2). The special <raw_dir> variable expands to the resolved
+# raw data file directory. Default places the file in raw_dir.
+notes_path = "<raw_dir>/<date>/notes.md"
+
 # Path templates for raw data files. Each template must include both
 # <date> and <project> variables. Defaults place files in raw_dir.
 git_path = "<raw_dir>/<date>/git-<project>.log"
-notes_path = "<raw_dir>/<date>/notes-<project>.md"
 term_path = "<raw_dir>/<date>/term-<project>*.log"
 
 # Interval in seconds between git diff snapshots. Default: 300 (5 minutes).
@@ -276,22 +282,18 @@ The configuration file is optional. All values have sensible defaults.
 
 **Path templates**: The `git_path`, `notes_path`, and `term_path` settings are
 path templates that control where raw data files are read from and written to.
-Each template must include both `<date>` (substituted with `YYYY-MM-DD`) and
-`<project>` (substituted with the project name) variables. The special
-`<raw_dir>` variable expands to the resolved raw directory. Templates may
-contain glob wildcard characters (like the `*` in `term_path`) to match multiple
-files for a single project and date.
+All templates support the `<raw_dir>` variable (expands to the resolved raw
+directory) and the `<date>` variable (substituted with `YYYY-MM-DD`).
 
-These templates are used uniformly throughout the application for writing raw
-data files, discovering projects, and reading data for summary generation — the
-application never hardcodes "look in the raw dir" for file discovery.
+| Template     | `<project>` | Glob | Discovers projects | Notes |
+|--------------|:-----------:|:----:|:------------------:|-------|
+| `git_path`   | required    | no   | yes                | Per-project file. Project names are extracted by globbing for `<project>`. |
+| `notes_path` | no          | no   | yes (via content)  | Single daily file shared across projects. Projects are discovered by parsing `#project` hashtags from headings (see section 4.2), not from the file path. |
+| `term_path`  | required    | yes  | no                 | Per-project file(s). The glob wildcard makes it ambiguous where the project name ends, so this template cannot discover projects. It only matches files for projects already discovered through other sources. |
 
-**Glob-enabled templates**: Templates that contain glob wildcards (such as
-`term_path`) behave slightly differently during project discovery (section 5.3).
-Because the wildcard makes it ambiguous where the project name ends, these
-templates do not contribute to project discovery. They are only used to find
-files for projects already discovered through other templates or the watch list.
-See section 5.3 for details.
+These templates are used throughout the application for writing raw data files,
+discovering projects, and reading data for summary generation. See section 5.3
+for details on project discovery.
 
 ### 3.2 Data directories
 
@@ -325,8 +327,8 @@ stored. Determined by, in order of precedence:
 ```
 <raw_dir>/
 └── <YYYY-MM-DD>/
+    ├── notes.md
     ├── git-<project>.log
-    ├── notes-<project>.md
     └── term-<project>*.log
 ```
 
@@ -383,7 +385,45 @@ having the same project name (whether default or overridden), the command must
 reject it with an error message identifying the conflict. Project names must be
 unique across all watched repos.
 
-### 4.2 Git diff snapshots
+### 4.2 Manually-logged notes and snippets
+
+Data can be captured by any external method or tooling into a notes file.
+Examples include direct notes logged by the user, snippets from the web or
+documentation, and snippets from the terminal or code. The file path is
+determined by the `notes_path` template (see section 3.1). By default, notes
+are read from `<raw_dir>/<YYYY-MM-DD>/notes.md`.
+
+The `devlog` command (see section 6.1) provides one way to log this data, which
+will be appended to the file at `notes_path`.
+
+#### Raw data file format: `notes.md`
+
+```
+### At 14:35 #project
+<message text>
+
+```
+
+Since this file can contain data provided by multiple external sources, we
+can't count on it having a perfectly consistent format. These are the
+formatting assumptions that will be used by the AI summarizer:
+
+- There will be a single notes file for each day, in Markdown format.
+
+- Each note entry will have a Markdown heading with the time the entry was
+  recorded, and optionally the name of the project the note is associated with
+  in hashtag format. The `devlog` command will write these headings as `### At
+  HH:MM #project`. A heading of `### At HH:MM` suggests a notes entry that
+  isn't associated with any particular project. After the heading, the note
+  text follows verbatim (may be multiple lines), terminated by a blank line.
+
+- The source of the note will be inferred from the note text. For example, if
+  it contains something like `URL: https://...`, it can be assumed to be
+  clipped from a website, or if it contains something like `Path:
+  ~/dev/foo/...` and a code block, it could be inferred to be a code snippet or
+  terminal output, depending on the content.
+
+### 4.3 Git diff snapshots
 
 The server captures git diffs at a configurable interval (default: 5 minutes)
 for each watched repository. The goal is to record the evolution of code
@@ -449,24 +489,6 @@ If the date has changed since the last cycle, it:
 2. Resets the deduplication state (previous diff) so the first snapshot of
    the new day captures the full current diff, even if it's unchanged from the
    last snapshot of the previous day.
-
-### 4.3 Manually-logged notes
-
-At any time, the user can log thoughts via the `devlog` command (see section
-6.1). The file path is determined by the `notes_path` template (see section
-3.1). By default, notes are written to
-`<raw_dir>/<YYYY-MM-DD>/notes-<project>.md`.
-
-#### Raw data file format: `notes-<project>.md`
-
-```
-### At 14:35
-<message text>
-
-```
-
-The delimiter line format is `### At HH:MM`. The message text follows
-verbatim (may be multiple lines), terminated by a blank line.
 
 ### 4.4 Terminal session logs
 
@@ -644,10 +666,12 @@ Before generating, the command checks whether regeneration is needed:
 
 1. Look for an existing summary at `<log_dir>/<date>.md`.
 2. If it exists, get its mtime.
-3. For each source path template, substitute `<date>` and glob for `<project>`.
-   Collect the max mtime across all matching files. Also check the mtime of
-   Claude Code session JSONL files (if `claude_code_dir` is configured) for any
-   projects whose paths map to a Claude Code log directory.
+3. For each per-project source path template (`git_path`, `term_path`),
+   substitute `<date>` and glob for `<project>`. Also check the mtime of the
+   notes file (resolved from `notes_path` for `<date>`). Also check the mtime
+   of Claude Code session JSONL files (if `claude_code_dir` is configured) for
+   any projects whose paths map to a Claude Code log directory. Collect the max
+   mtime across all matching files.
 4. If the summary's mtime is more recent than the max raw data mtime, print
    a message ("Summary is up to date, no new data since last generation") and
    exit without invoking the AI.
@@ -657,13 +681,20 @@ Before generating, the command checks whether regeneration is needed:
 
 The generation process:
 
-1. **Discover projects from non-glob templates**: For each raw data source path
-   template that does not contain literal glob wildcards (`git_path`,
-   `notes_path`), substitute `<date>` and replace `<project>` with a glob
-   wildcard `*`. Glob the filesystem and extract project names from matches
-   using the template as a pattern.
+1. **Discover projects from per-project templates**: For each path template
+   that contains a `<project>` variable and does not contain literal glob
+   wildcards (`git_path`), substitute `<date>` and replace `<project>` with a
+   glob wildcard `*`. Glob the filesystem and extract project names from
+   matches using the template as a pattern. (Templates without `<project>`,
+   like `notes_path`, and glob-enabled templates, like `term_path`, are not
+   used for this step.)
 
-2. **Discover projects from Claude Code sessions**: If `claude_code_dir` is
+2. **Discover projects from notes entries**: Resolve the `notes_path` template
+   for `<date>` and, if the file exists, parse the headings for project
+   hashtags. Each unique hashtag adds a project to the discovered set. Notes
+   entries without a hashtag are grouped under a pseudo-project (see below).
+
+3. **Discover projects from Claude Code sessions**: If `claude_code_dir` is
    configured, use the watched repos from `state.json` to find Claude Code
    session directories. For each watched repo, convert its absolute path to
    the Claude Code directory name format (replace `/` with `-`, e.g.,
@@ -675,19 +706,33 @@ The generation process:
    encoding is ambiguous — a `-` in the directory name could be a path
    separator or a literal hyphen in a directory name.)
 
-3. Take the union of project names across all discovery methods.
+4. Take the union of project names across all discovery methods.
 
-4. For each project:
-   a. Resolve all non-glob path templates and read whichever files exist.
+5. For each project:
+   a. Resolve per-project path templates (`git_path`) by substituting `<date>`
+      and `<project>`, and read whichever files exist.
    b. Resolve glob-enabled templates (like `term_path`) by substituting
       `<date>` and `<project>` with the known values, then globbing the
       result. Read all matching files and concatenate their contents.
-   c. If `claude_code_dir` is configured and the project has a known repo path
+   c. Filter the notes file for entries matching this project's hashtag. Only
+      the matching entries are included in this project's prompt (see section
+      4.2 for the heading format). Notes entries without a hashtag are not
+      included — they belong to the unaffiliated pseudo-project (see below).
+   d. If `claude_code_dir` is configured and the project has a known repo path
       (from `state.json`), run the Claude Code preprocessing step (section
       4.5) to extract a transcript for the target date.
 
-5. Invoke the AI summarizer per project (section 5.4).
-6. Assemble the per-project summaries into a single Markdown file.
+6. Invoke the AI summarizer per project (section 5.4).
+7. Assemble the per-project summaries into a single Markdown file.
+
+**Unaffiliated notes**: Notes entries without a project hashtag (`### At HH:MM`
+with no `#project`) are treated as a separate pseudo-project called "general"
+for the purposes of summary generation. If any unaffiliated notes exist for the
+target date, they are collected and summarized as their own project section,
+appearing in the output file under a `## general` heading alongside the real
+project sections. No other data sources (git diffs, terminal logs, Claude Code
+sessions) contribute to this pseudo-project — it contains only the unaffiliated
+notes.
 
 #### Data source availability by project status
 
@@ -695,12 +740,12 @@ The table below summarizes which data sources are available depending on whether
 a project is in the watch list. Important projects should be watched to get full
 coverage. Data collection for unwatched projects is best-effort.
 
-| Data source        | Watched projects | Unwatched projects                        |
-|--------------------|------------------|-------------------------------------------|
-| Git diffs          | Yes (auto)       | No (server collects only watched repos)   |
-| Manual notes       | Yes              | Yes (via `devlog -m -p <project>`)        |
-| Terminal logs      | Yes              | Only if the project is also discovered through another source (e.g., notes) |
-| Claude Code sessions | Yes            | No (requires repo path from watch list)   |
+| Data source          | Watched projects | Unwatched projects                        |
+|----------------------|------------------|-------------------------------------------|
+| Notes/snippets       | Yes              | Yes (via `devlog -m -p <project>`)        |
+| Git diffs            | Yes (auto)       | No (server collects only watched repos)   |
+| Terminal logs        | Yes              | Only if the project is also discovered through another source (e.g., notes) |
+| Claude Code sessions | Yes              | No (requires repo path from watch list)   |
 
 A project appears in a summary if it is discovered through at least one
 discovery-capable source: git diffs, manual notes, or Claude Code sessions. An
@@ -711,9 +756,9 @@ appear in the summary.
 
 For each project, the tool:
 
-1. Resolves each source path template for this project and reads whichever
-   files exist. For Claude Code sessions, reads the preprocessed transcript
-   (section 4.5) rather than the raw JSONL files.
+1. Collects the raw data for this project as described in section 5.3 step 5:
+   per-project files from path templates, filtered notes entries, and (if
+   applicable) preprocessed Claude Code transcripts.
 
 2. Assembles the full prompt by substituting the file contents directly into
    the prompt template (see section 5.5).
@@ -763,12 +808,13 @@ Below is the raw data collected during the day.
 
 Description of data sources:
 
+- notes.md: Manually logged notes and snippets with timestamps. These can be
+  developer notes expressing intent, observations, and decisions. They can
+  also be snippets captured from code, docs, the web, or terminal sessions.
+
 - git-<project>.log: Time-stamped snapshots of uncommitted code changes,
   taken every 5 minutes. These show the evolution of the code over the day,
   including approaches that were tried and abandoned.
-
-- notes-<project>.md: Manually logged notes with timestamps, expressing
-  intent, observations, and decisions.
 
 - term-<project>*.log: Terminal session recordings captured with tools like
   `script`. These show the developer's terminal activity: commands run, test
@@ -811,8 +857,8 @@ it expands to one section per file, e.g.:
 diff --git a/main.go b/main.go
 ...
 
---- notes-myproject.md ---
-### At 10:20
+--- notes.md ---
+### At 10:20 #myproject
 Starting work on the CLI parser
 
 --- term-myproject-1.log ---
@@ -858,10 +904,6 @@ subcommand (or lack thereof).
 
 Log a note for the current project.
 
-**Precondition**: If the `-p` argument is not provided, this must be invoked
-from within a git repository. If not, print "Error: not in a git repository" to
-stderr and exit 1.
-
 **Behavior**:
 
 1. Determine the project name: If the `-p` argument is provided, use it as the
@@ -869,22 +911,26 @@ stderr and exit 1.
    then read `state.json` and look for an entry whose `path` matches the repo
    root. If found, use its `name`. If not found (repo is not watched), fall
    back to the basename of the repo root. This ensures notes use the same
-   project name as the watch command, including any `--name` override.
-3. Determine today's date (`YYYY-MM-DD`).
-4. If `-m <message>` is provided, use `<message>` as the note text.
-5. If `-m` is not provided, create a temporary file pre-filled with:
+   project name as the watch command, including any `--name` override. If
+   invoked outside of a git repo without the `-p` argument, record a note
+   without a project hashtag.
+2. Determine today's date (`YYYY-MM-DD`).
+3. If `-m <message>` is provided, use `<message>` as the note text.
+4. If `-m` is not provided, create a temporary file pre-filled with:
    ```
    # Project: <project>
    # Enter your note below. Lines starting with # are ignored.
    ```
-   Open this file in `$EDITOR` (falling back to the configured editor, then
-   `vi`). When the editor exits, read the file, strip lines starting with `#`,
-   and trim whitespace. If the result is empty, print "Note cancelled (empty
-   message)" and exit 0.
-6. Resolve the `notes_path` template for this project and today's date. Append
-   the note to the resulting path using the format defined in section 4.3.
-   Create parent directories if needed.
-7. Print "Logged note for <project>."
+   If there is no project (outside a git repo without `-p`), substitute `N/A`
+   for `<project>` in the template. Open this file in `$EDITOR` (falling back
+   to the configured editor, then `vi`). When the editor exits, read the file,
+   strip lines starting with `#`, and trim whitespace. If the result is empty,
+   print "Note cancelled (empty message)" and exit 0.
+5. Resolve the `notes_path` template for today's date. Append the note to the
+   resulting path using the format defined in section 4.2. Create parent
+   directories if needed.
+6. If a project was determined, print "Logged note for <project>." If no
+   project, print "Logged note."
 
 **Does not require a running server.**
 

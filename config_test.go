@@ -210,17 +210,17 @@ func TestResolveNotesPathDefault(t *testing.T) {
 	t.Setenv("DEVLOG_RAW_DIR", tmp)
 
 	cfg := Config{}
-	got := resolveNotesPath(cfg, "2024-01-15", "myproject")
-	want := filepath.Join(tmp, "2024-01-15", "notes-myproject.md")
+	got := resolveNotesPath(cfg, "2024-01-15")
+	want := filepath.Join(tmp, "2024-01-15", "notes.md")
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
 func TestResolveNotesPathCustom(t *testing.T) {
-	cfg := Config{NotesPath: "/notes/<date>/<project>.md"}
-	got := resolveNotesPath(cfg, "2024-01-15", "myproject")
-	want := "/notes/2024-01-15/myproject.md"
+	cfg := Config{NotesPath: "/notes/<date>/notes.md"}
+	got := resolveNotesPath(cfg, "2024-01-15")
+	want := "/notes/2024-01-15/notes.md"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -234,17 +234,17 @@ func TestDiscoverProjects(t *testing.T) {
 	dateDir := filepath.Join(tmp, "2024-01-15")
 	os.MkdirAll(dateDir, 0o755)
 	os.WriteFile(filepath.Join(dateDir, "git-foo.log"), []byte("x"), 0o644)
-	os.WriteFile(filepath.Join(dateDir, "notes-foo.md"), []byte("x"), 0o644)
 	os.WriteFile(filepath.Join(dateDir, "git-bar.log"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(dateDir, "notes.md"), []byte("### At 10:00 #baz\nsome note\n\n"), 0o644)
 
 	cfg := Config{}
 	projects := discoverProjects(cfg, "2024-01-15")
 
-	if len(projects) != 2 {
-		t.Fatalf("expected 2 projects, got %d: %v", len(projects), projects)
+	if len(projects) != 3 {
+		t.Fatalf("expected 3 projects, got %d: %v", len(projects), projects)
 	}
-	if projects[0] != "bar" || projects[1] != "foo" {
-		t.Errorf("expected [bar foo], got %v", projects)
+	if projects[0] != "bar" || projects[1] != "baz" || projects[2] != "foo" {
+		t.Errorf("expected [bar baz foo], got %v", projects)
 	}
 }
 
@@ -334,11 +334,6 @@ func TestExtractProjectFromPath(t *testing.T) {
 			"/data/raw", "2024-01-15", "foo",
 		},
 		{
-			"/data/raw/2024-01-15/notes-bar.md",
-			"<raw_dir>/<date>/notes-<project>.md",
-			"/data/raw", "2024-01-15", "bar",
-		},
-		{
 			"/custom/2024-01-15/myproject-git.log",
 			"/custom/<date>/<project>-git.log",
 			"/data/raw", "2024-01-15", "myproject",
@@ -350,5 +345,40 @@ func TestExtractProjectFromPath(t *testing.T) {
 			t.Errorf("extractProjectFromPath(%q, %q, %q, %q) = %q, want %q",
 				tt.path, tt.tmpl, tt.rawDir, tt.date, got, tt.want)
 		}
+	}
+}
+
+func TestDiscoverProjectsFromNotes(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("DEVLOG_RAW_DIR", tmp)
+
+	dateDir := filepath.Join(tmp, "2024-01-15")
+	os.MkdirAll(dateDir, 0o755)
+	os.WriteFile(filepath.Join(dateDir, "notes.md"), []byte(
+		"### At 09:00 #alpha\nfirst note\n\n"+
+			"### At 10:00\nunaffiliated note\n\n"+
+			"### At 11:00 #beta\nsecond note\n\n"+
+			"### At 12:00 #alpha\nanother alpha note\n\n",
+	), 0o644)
+
+	cfg := Config{}
+	projects := discoverProjectsFromNotes(cfg, "2024-01-15")
+
+	if len(projects) != 2 {
+		t.Fatalf("expected 2 projects, got %d: %v", len(projects), projects)
+	}
+	if projects[0] != "alpha" || projects[1] != "beta" {
+		t.Errorf("expected [alpha beta], got %v", projects)
+	}
+}
+
+func TestDiscoverProjectsFromNotesNoFile(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("DEVLOG_RAW_DIR", tmp)
+
+	cfg := Config{}
+	projects := discoverProjectsFromNotes(cfg, "2024-01-15")
+	if len(projects) != 0 {
+		t.Errorf("expected no projects, got %v", projects)
 	}
 }

@@ -5,10 +5,47 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 )
+
+var filterHeadingRe = regexp.MustCompile(`^### At \d{2}:\d{2}(\s+#(\S+))?`)
+
+func filterNotesForProject(content, project string) string {
+	lines := strings.Split(content, "\n")
+	var result []string
+	var inMatch bool
+	tag := "#" + project
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "### At ") {
+			inMatch = filterHeadingRe.MatchString(line) && strings.Contains(line, tag)
+		}
+		if inMatch {
+			result = append(result, line)
+		}
+	}
+	return strings.TrimRight(strings.Join(result, "\n"), "\n")
+}
+
+func filterUnaffiliatedNotes(content string) string {
+	lines := strings.Split(content, "\n")
+	var result []string
+	var inMatch bool
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "### At ") {
+			m := filterHeadingRe.FindStringSubmatch(line)
+			inMatch = m != nil && m[2] == ""
+		}
+		if inMatch {
+			result = append(result, line)
+		}
+	}
+	return strings.TrimRight(strings.Join(result, "\n"), "\n")
+}
 
 func assemblePrompt(project, date string, files map[string]string) string {
 	var b strings.Builder
@@ -31,12 +68,13 @@ func assemblePrompt(project, date string, files map[string]string) string {
 	b.WriteString(`
 Description of data sources:
 
+- notes.md: Manually logged notes and snippets with timestamps. These can be
+  developer notes expressing intent, observations, and decisions. They can
+  also be snippets captured from code, docs, the web, or terminal sessions.
+
 - git-` + project + `.log: Time-stamped snapshots of uncommitted code changes,
   taken every 5 minutes. These show the evolution of the code over the day,
   including approaches that were tried and abandoned.
-
-- notes-` + project + `.md: Manually logged notes with timestamps, expressing
-  intent, observations, and decisions.
 
 - term-` + project + `*.log: Terminal session recordings captured with tools like
   ` + "`script`" + `. These show the developer's terminal activity: commands run, test
@@ -83,9 +121,17 @@ func generateProjectSummary(cfg Config, state State, project, date string) (stri
 	}
 
 	// Check for notes
-	notesPath := resolveNotesPath(cfg, date, project)
+	notesPath := resolveNotesPath(cfg, date)
 	if data, err := os.ReadFile(notesPath); err == nil {
-		files[filepath.Base(notesPath)] = string(data)
+		var filtered string
+		if project == "general" {
+			filtered = filterUnaffiliatedNotes(string(data))
+		} else {
+			filtered = filterNotesForProject(string(data), project)
+		}
+		if filtered != "" {
+			files["notes.md"] = filtered
+		}
 	}
 
 	// Check for terminal logs
@@ -213,6 +259,20 @@ func runGen(cfg Config, state State, date string) error {
 		}
 	}
 
+	// Check for unaffiliated notes → "general" pseudo-project
+	notesPath := resolveNotesPath(cfg, date)
+	if data, err := os.ReadFile(notesPath); err == nil {
+		if unaffiliated := filterUnaffiliatedNotes(string(data)); unaffiliated != "" {
+			summary, err := generateProjectSummary(cfg, state, "general", date)
+			if err != nil {
+				return fmt.Errorf("generating summary for general: %w", err)
+			}
+			if summary != "" {
+				summaries = append(summaries, projectSummary{name: "general", summary: summary})
+			}
+		}
+	}
+
 	if len(summaries) == 0 {
 		fmt.Fprintf(os.Stderr, "No raw data for %s\n", date)
 		return nil
@@ -239,45 +299,74 @@ func runGen(cfg Config, state State, date string) error {
 
 func runGenPrompt(cfg Config, state State, date string) error {
 	projects := discoverAllProjects(cfg, state, date)
-	if len(projects) == 0 {
+
+	// Check for unaffiliated notes → "general" pseudo-project
+	notesPath := resolveNotesPath(cfg, date)
+	hasGeneral := false
+	var notesData []byte
+	if data, err := os.ReadFile(notesPath); err == nil {
+		notesData = data
+		if filterUnaffiliatedNotes(string(data)) != "" {
+			hasGeneral = true
+		}
+	}
+
+	if len(projects) == 0 && !hasGeneral {
 		fmt.Fprintf(os.Stderr, "No raw data for %s\n", date)
 		return nil
 	}
 
-	multi := len(projects) > 1
+	allProjects := make([]string, len(projects))
+	copy(allProjects, projects)
+	if hasGeneral {
+		allProjects = append(allProjects, "general")
+	}
 
-	for i, proj := range projects {
+	multi := len(allProjects) > 1
+
+	for i, proj := range allProjects {
 		files := make(map[string]string)
 
-		gitPath := resolveGitPath(cfg, date, proj)
-		if data, err := os.ReadFile(gitPath); err == nil {
-			files[filepath.Base(gitPath)] = string(data)
-		}
-
-		notesPath := resolveNotesPath(cfg, date, proj)
-		if data, err := os.ReadFile(notesPath); err == nil {
-			files[filepath.Base(notesPath)] = string(data)
-		}
-
-		termPattern := resolveTermGlob(cfg, date, proj)
-		if matches, err := filepath.Glob(termPattern); err == nil {
-			for _, m := range matches {
-				if data, err := os.ReadFile(m); err == nil {
-					files[filepath.Base(m)] = string(data)
-				}
+		if proj != "general" {
+			gitPath := resolveGitPath(cfg, date, proj)
+			if data, err := os.ReadFile(gitPath); err == nil {
+				files[filepath.Base(gitPath)] = string(data)
 			}
 		}
 
-		// Check for Claude Code sessions
-		claudeDir := resolveClaudeCodeDir(cfg)
-		if claudeDir != "" {
-			for _, w := range state.Watched {
-				if w.Name == proj {
-					projDir := filepath.Join(claudeDir, repoPathToClaudeDir(w.Path))
-					if transcript, err := preprocessClaudeCodeSessions(projDir, date, time.Now().Location()); err == nil && transcript != "" {
-						files["claude-code-sessions.txt"] = transcript
+		if notesData != nil {
+			var filtered string
+			if proj == "general" {
+				filtered = filterUnaffiliatedNotes(string(notesData))
+			} else {
+				filtered = filterNotesForProject(string(notesData), proj)
+			}
+			if filtered != "" {
+				files["notes.md"] = filtered
+			}
+		}
+
+		if proj != "general" {
+			termPattern := resolveTermGlob(cfg, date, proj)
+			if matches, err := filepath.Glob(termPattern); err == nil {
+				for _, m := range matches {
+					if data, err := os.ReadFile(m); err == nil {
+						files[filepath.Base(m)] = string(data)
 					}
-					break
+				}
+			}
+
+			// Check for Claude Code sessions
+			claudeDir := resolveClaudeCodeDir(cfg)
+			if claudeDir != "" {
+				for _, w := range state.Watched {
+					if w.Name == proj {
+						projDir := filepath.Join(claudeDir, repoPathToClaudeDir(w.Path))
+						if transcript, err := preprocessClaudeCodeSessions(projDir, date, time.Now().Location()); err == nil && transcript != "" {
+							files["claude-code-sessions.txt"] = transcript
+						}
+						break
+					}
 				}
 			}
 		}
@@ -315,15 +404,10 @@ func collectRawFileMtime(cfg Config, state State, date string) time.Time {
 		}
 	}
 
-	notesTmpl := cfg.NotesPath
-	if notesTmpl == "" {
-		notesTmpl = "<raw_dir>/<date>/notes-<project>.md"
-	}
-	for _, path := range globForTemplate(notesTmpl, rawDir, date) {
-		if info, err := os.Stat(path); err == nil {
-			if info.ModTime().After(maxMtime) {
-				maxMtime = info.ModTime()
-			}
+	notesPath := resolveNotesPath(cfg, date)
+	if info, err := os.Stat(notesPath); err == nil {
+		if info.ModTime().After(maxMtime) {
+			maxMtime = info.ModTime()
 		}
 	}
 

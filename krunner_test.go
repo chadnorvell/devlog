@@ -166,26 +166,16 @@ func TestKRunnerRunWithContent(t *testing.T) {
 	}
 
 	dateDir := filepath.Join(tmpDir, entries[0].Name())
-	files, err := os.ReadDir(dateDir)
+	notesPath := filepath.Join(dateDir, "notes.md")
+	data, err := os.ReadFile(notesPath)
 	if err != nil {
-		t.Fatalf("reading date dir: %v", err)
+		t.Fatalf("reading notes file: %v", err)
 	}
-
-	found := false
-	for _, f := range files {
-		if strings.HasPrefix(f.Name(), "notes-devlog") {
-			data, err := os.ReadFile(filepath.Join(dateDir, f.Name()))
-			if err != nil {
-				t.Fatalf("reading notes file: %v", err)
-			}
-			if !strings.Contains(string(data), "test note from krunner") {
-				t.Errorf("notes file doesn't contain expected content: %s", data)
-			}
-			found = true
-		}
+	if !strings.Contains(string(data), "test note from krunner") {
+		t.Errorf("notes file doesn't contain expected content: %s", data)
 	}
-	if !found {
-		t.Error("no notes file found for devlog project")
+	if !strings.Contains(string(data), "#devlog") {
+		t.Errorf("notes file should contain project hashtag: %s", data)
 	}
 }
 

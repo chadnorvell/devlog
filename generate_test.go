@@ -11,8 +11,8 @@ import (
 
 func TestAssemblePrompt(t *testing.T) {
 	files := map[string]string{
-		"git-myproject.log":  "=== SNAPSHOT 10:15 ===\ndiff content\n",
-		"notes-myproject.md": "### At 10:20\nStarted work\n",
+		"git-myproject.log": "=== SNAPSHOT 10:15 ===\ndiff content\n",
+		"notes.md":          "### At 10:20 #myproject\nStarted work\n",
 	}
 
 	prompt := assemblePrompt("myproject", "2024-01-15", files)
@@ -31,7 +31,7 @@ func TestAssemblePrompt(t *testing.T) {
 	if !strings.Contains(prompt, "--- git-myproject.log ---") {
 		t.Error("prompt should contain git log section")
 	}
-	if !strings.Contains(prompt, "--- notes-myproject.md ---") {
+	if !strings.Contains(prompt, "--- notes.md ---") {
 		t.Error("prompt should contain notes section")
 	}
 	if !strings.Contains(prompt, "diff content") {
@@ -49,14 +49,14 @@ func TestAssemblePromptGitOnly(t *testing.T) {
 	if !strings.Contains(prompt, "--- git-myproject.log ---") {
 		t.Error("prompt should contain git log section")
 	}
-	if strings.Contains(prompt, "--- notes-myproject.md ---") {
+	if strings.Contains(prompt, "--- notes.md ---") {
 		t.Error("prompt should NOT contain notes section when notes don't exist")
 	}
 }
 
 func TestAssemblePromptNotesOnly(t *testing.T) {
 	files := map[string]string{
-		"notes-myproject.md": "### At 10:20\nsome notes\n",
+		"notes.md": "### At 10:20 #myproject\nsome notes\n",
 	}
 
 	prompt := assemblePrompt("myproject", "2024-01-15", files)
@@ -64,7 +64,7 @@ func TestAssemblePromptNotesOnly(t *testing.T) {
 	if strings.Contains(prompt, "--- git-myproject.log ---") {
 		t.Error("prompt should NOT contain git log section when git log doesn't exist")
 	}
-	if !strings.Contains(prompt, "--- notes-myproject.md ---") {
+	if !strings.Contains(prompt, "--- notes.md ---") {
 		t.Error("prompt should contain notes section")
 	}
 }
@@ -80,8 +80,8 @@ func TestRunGenPrompt(t *testing.T) {
 	os.MkdirAll(dateDir, 0o755)
 	os.WriteFile(filepath.Join(dateDir, "git-myproject.log"),
 		[]byte("=== SNAPSHOT 10:00 ===\ndiff content\n"), 0o644)
-	os.WriteFile(filepath.Join(dateDir, "notes-myproject.md"),
-		[]byte("### At 10:20\nStarted work\n"), 0o644)
+	os.WriteFile(filepath.Join(dateDir, "notes.md"),
+		[]byte("### At 10:20 #myproject\nStarted work\n"), 0o644)
 
 	// Capture stdout
 	oldStdout := os.Stdout
@@ -534,6 +534,85 @@ func TestCollectRawFileMtimeIncludesClaudeCode(t *testing.T) {
 
 	if maxMtime.Before(recent) {
 		t.Errorf("maxMtime should include Claude Code JSONL time, got %v, want at least %v", maxMtime, recent)
+	}
+}
+
+func TestFilterNotesForProject(t *testing.T) {
+	content := "### At 09:00 #alpha\nalpha note 1\n\n" +
+		"### At 10:00 #beta\nbeta note\n\n" +
+		"### At 11:00 #alpha\nalpha note 2\n\n" +
+		"### At 12:00\nunaffiliated note\n\n"
+
+	got := filterNotesForProject(content, "alpha")
+	if !strings.Contains(got, "alpha note 1") {
+		t.Error("should contain first alpha note")
+	}
+	if !strings.Contains(got, "alpha note 2") {
+		t.Error("should contain second alpha note")
+	}
+	if strings.Contains(got, "beta note") {
+		t.Error("should not contain beta note")
+	}
+	if strings.Contains(got, "unaffiliated note") {
+		t.Error("should not contain unaffiliated note")
+	}
+}
+
+func TestFilterUnaffiliatedNotes(t *testing.T) {
+	content := "### At 09:00 #alpha\nalpha note\n\n" +
+		"### At 10:00\ngeneral note 1\n\n" +
+		"### At 11:00 #beta\nbeta note\n\n" +
+		"### At 12:00\ngeneral note 2\n\n"
+
+	got := filterUnaffiliatedNotes(content)
+	if !strings.Contains(got, "general note 1") {
+		t.Error("should contain first unaffiliated note")
+	}
+	if !strings.Contains(got, "general note 2") {
+		t.Error("should contain second unaffiliated note")
+	}
+	if strings.Contains(got, "alpha note") {
+		t.Error("should not contain alpha note")
+	}
+	if strings.Contains(got, "beta note") {
+		t.Error("should not contain beta note")
+	}
+}
+
+func TestRunGenPromptGeneral(t *testing.T) {
+	tmp := t.TempDir()
+	rawDir := filepath.Join(tmp, "raw")
+	t.Setenv("DEVLOG_RAW_DIR", rawDir)
+	t.Setenv("DEVLOG_LOG_DIR", filepath.Join(tmp, "log"))
+
+	date := "2024-01-15"
+	dateDir := filepath.Join(rawDir, date)
+	os.MkdirAll(dateDir, 0o755)
+	os.WriteFile(filepath.Join(dateDir, "notes.md"),
+		[]byte("### At 10:00\nA general note\n\n"), 0o644)
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	cfg := Config{}
+	err := runGenPrompt(cfg, State{}, date)
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out, _ := io.ReadAll(r)
+	s := string(out)
+
+	if !strings.Contains(s, `"general"`) {
+		t.Error("output should contain general pseudo-project")
+	}
+	if !strings.Contains(s, "A general note") {
+		t.Error("output should contain the unaffiliated note")
 	}
 }
 

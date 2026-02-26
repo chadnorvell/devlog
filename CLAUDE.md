@@ -41,7 +41,7 @@ Single-package Go binary (`package main`). No subdirectories for source.
 
 ## Key conventions
 
-- Raw data paths are template-based: `<raw_dir>`, `<date>`, `<project>` are substituted at runtime. Defaults: `<raw_dir>/<date>/git-<project>.log` and `<raw_dir>/<date>/notes-<project>.md`.
+- Raw data paths are template-based: `<raw_dir>`, `<date>`, `<project>` are substituted at runtime. Per-project defaults: `<raw_dir>/<date>/git-<project>.log`. Notes use a single daily file: `<raw_dir>/<date>/notes.md` (project association via `#project` hashtags in headings).
 - Config file: `$XDG_CONFIG_HOME/devlog/config.toml`
 - XDG base directories are used throughout (data, config, state, runtime).
 - Tests use `t.TempDir()` and `t.Setenv()` for isolation — no global state.

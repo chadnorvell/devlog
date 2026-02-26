@@ -34,17 +34,14 @@ func cmdNote() {
 		}
 
 		repoRoot, err := resolveRepoRoot(cwd)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "Error: not in a git repository")
-			os.Exit(1)
+		if err == nil {
+			state, _ := loadState()
+			projectName = projectNameForRepo(repoRoot, state, "")
 		}
-
-		state, _ := loadState()
-		projectName = projectNameForRepo(repoRoot, state, "")
 	}
 
 	today := time.Now().Format("2006-01-02")
-	notesFile := resolveNotesPath(cfg, today, projectName)
+	notesFile := resolveNotesPath(cfg, today)
 
 	var noteText string
 	if *msg != "" {
@@ -61,12 +58,16 @@ func cmdNote() {
 		}
 	}
 
-	if err := writeNote(notesFile, noteText); err != nil {
+	if err := writeNote(notesFile, noteText, projectName); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Logged note for %s.\n", projectName)
+	if projectName != "" {
+		fmt.Printf("Logged note for %s.\n", projectName)
+	} else {
+		fmt.Println("Logged note.")
+	}
 }
 
 func editNote(cfg Config, projectName string) (string, error) {
@@ -79,7 +80,11 @@ func editNote(cfg Config, projectName string) (string, error) {
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
 
-	template := fmt.Sprintf("# Project: %s\n# Enter your note below. Lines starting with # are ignored.\n", projectName)
+	displayProject := projectName
+	if displayProject == "" {
+		displayProject = "N/A"
+	}
+	template := fmt.Sprintf("# Project: %s\n# Enter your note below. Lines starting with # are ignored.\n", displayProject)
 	tmp.WriteString(template)
 	tmp.Close()
 
@@ -106,7 +111,7 @@ func editNote(cfg Config, projectName string) (string, error) {
 	return strings.TrimSpace(strings.Join(lines, "\n")), nil
 }
 
-func writeNote(notesFile, text string) error {
+func writeNote(notesFile, text, project string) error {
 	if err := os.MkdirAll(filepath.Dir(notesFile), 0o755); err != nil {
 		return fmt.Errorf("creating raw dir: %w", err)
 	}
@@ -118,7 +123,12 @@ func writeNote(notesFile, text string) error {
 	defer f.Close()
 
 	now := time.Now()
-	header := fmt.Sprintf("### At %02d:%02d\n", now.Hour(), now.Minute())
+	var header string
+	if project != "" {
+		header = fmt.Sprintf("### At %02d:%02d #%s\n", now.Hour(), now.Minute(), project)
+	} else {
+		header = fmt.Sprintf("### At %02d:%02d\n", now.Hour(), now.Minute())
+	}
 	if _, err := f.WriteString(header + text + "\n\n"); err != nil {
 		return fmt.Errorf("writing note: %w", err)
 	}

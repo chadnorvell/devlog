@@ -140,9 +140,9 @@ func (k *KRunner) Run(matchID string, actionID string) *dbus.Error {
 	}
 
 	today := time.Now().Format("2006-01-02")
-	notesFile := resolveNotesPath(cfg, today, project)
+	notesFile := resolveNotesPath(cfg, today)
 
-	if err := writeNote(notesFile, content); err != nil {
+	if err := writeNote(notesFile, content, project); err != nil {
 		log.Printf("krunner: write error: %v", err)
 	}
 

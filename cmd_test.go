@@ -8,9 +8,48 @@ import (
 )
 
 func TestWriteNote(t *testing.T) {
-	notesFile := filepath.Join(t.TempDir(), "2024-01-15", "notes-myproject.md")
+	notesFile := filepath.Join(t.TempDir(), "2024-01-15", "notes.md")
 
-	err := writeNote(notesFile, "Testing the note command")
+	err := writeNote(notesFile, "Testing the note command", "myproject")
+	if err != nil {
+		t.Fatalf("writeNote: %v", err)
+	}
+
+	content, err := os.ReadFile(notesFile)
+	if err != nil {
+		t.Fatalf("reading notes: %v", err)
+	}
+
+	s := string(content)
+	if !strings.Contains(s, "#myproject") {
+		t.Error("missing project hashtag in header")
+	}
+	if !strings.Contains(s, "Testing the note command") {
+		t.Error("missing note text")
+	}
+	if !strings.HasSuffix(s, "\n\n") {
+		t.Error("note should end with blank line")
+	}
+}
+
+func TestWriteNoteMultiple(t *testing.T) {
+	notesFile := filepath.Join(t.TempDir(), "2024-01-15", "notes.md")
+
+	writeNote(notesFile, "First note", "myproject")
+	writeNote(notesFile, "Second note", "myproject")
+
+	content, _ := os.ReadFile(notesFile)
+
+	count := strings.Count(string(content), "### At")
+	if count != 2 {
+		t.Errorf("expected 2 notes, got %d", count)
+	}
+}
+
+func TestWriteNoteNoProject(t *testing.T) {
+	notesFile := filepath.Join(t.TempDir(), "2024-01-15", "notes.md")
+
+	err := writeNote(notesFile, "A general note", "")
 	if err != nil {
 		t.Fatalf("writeNote: %v", err)
 	}
@@ -24,25 +63,11 @@ func TestWriteNote(t *testing.T) {
 	if !strings.Contains(s, "### At") {
 		t.Error("missing note header")
 	}
-	if !strings.Contains(s, "Testing the note command") {
-		t.Error("missing note text")
+	if strings.Contains(s, "#") && !strings.Contains(s, "### ") {
+		t.Error("note without project should not contain a hashtag")
 	}
-	if !strings.HasSuffix(s, "\n\n") {
-		t.Error("note should end with blank line")
-	}
-}
-
-func TestWriteNoteMultiple(t *testing.T) {
-	notesFile := filepath.Join(t.TempDir(), "2024-01-15", "notes-myproject.md")
-
-	writeNote(notesFile, "First note")
-	writeNote(notesFile, "Second note")
-
-	content, _ := os.ReadFile(notesFile)
-
-	count := strings.Count(string(content), "### At")
-	if count != 2 {
-		t.Errorf("expected 2 notes, got %d", count)
+	if strings.Count(s, "#") != 3 { // only the ### heading
+		t.Errorf("expected only ### in header, got content: %q", s)
 	}
 }
 
