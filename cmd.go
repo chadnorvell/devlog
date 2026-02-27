@@ -14,6 +14,7 @@ import (
 func cmdNote() {
 	fs := flag.NewFlagSet("note", flag.ExitOnError)
 	msg := fs.String("m", "", "note message")
+	code := fs.String("c", "", "code block")
 	proj := fs.String("p", "", "project name")
 	fs.Parse(os.Args[1:])
 
@@ -43,19 +44,26 @@ func cmdNote() {
 	today := time.Now().Format("2006-01-02")
 	notesFile := resolveNotesPath(cfg, today)
 
-	var noteText string
+	var msgText string
 	if *msg != "" {
-		noteText = *msg
+		msgText = *msg
 	} else {
-		noteText, err = editNote(cfg, projectName)
+		msgText, err = editNote(cfg, projectName)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		if noteText == "" {
+		if msgText == "" {
 			fmt.Println("Note cancelled (empty message)")
 			return
 		}
+	}
+
+	var noteText string
+	if *code != "" {
+		noteText = msgText + "\n```\n" + *code + "\n```"
+	} else {
+		noteText = msgText
 	}
 
 	if err := writeNote(notesFile, noteText, projectName); err != nil {

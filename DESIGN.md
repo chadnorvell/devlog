@@ -1000,7 +1000,7 @@ heading of the date, followed by second-level headings for each project.
 The `devlog` command is the single entry point. Behavior is determined by the
 subcommand (or lack thereof).
 
-### 6.1 `devlog [-m <message>] [-p <project>]` (no subcommand)
+### 6.1 `devlog [-m <message>] [-c <code>] [-p <project>]` (no subcommand)
 
 Log a note for the current project.
 
@@ -1026,10 +1026,12 @@ Log a note for the current project.
    to the configured editor, then `vi`). When the editor exits, read the file,
    strip lines starting with `#`, and trim whitespace. If the result is empty,
    print "Note cancelled (empty message)" and exit 0.
-5. Resolve the `notes_path` template for today's date. Append the note to the
+5. If `-c` is provided, after the message add a newline and the content
+   wrapped in Markdown code block delimiters.
+6. Resolve the `notes_path` template for today's date. Append the note to the
    resulting path using the format defined in section 4.2. Create parent
    directories if needed.
-6. If a project was determined, print "Logged note for <project>." If no
+7. If a project was determined, print "Logged note for <project>." If no
    project, print "Logged note."
 
 **Does not require a running server.**
