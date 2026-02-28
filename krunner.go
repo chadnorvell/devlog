@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	krunnerBusName   = "org.devlog.krunner"
+	krunnerBusName   = "org.chadnorvell.devlog.krunner"
 	krunnerPath      = "/krunner"
 	krunnerInterface = "org.kde.krunner1"
 )

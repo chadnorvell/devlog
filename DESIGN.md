@@ -148,7 +148,7 @@ launched with a multi-line text box to capture longer input. When that dialog
 is submitted, the action will call `devlog -m <content> -p <project>`.
 
 - Destination path: `/krunner`
-- Destination name: `org.devlog.krunner`
+- Destination name: `org.chadnorvell.devlog.krunner`
 
 - **Match**
 
@@ -173,11 +173,11 @@ is submitted, the action will call `devlog -m <content> -p <project>`.
 
 #### KRunner .desktop file
 
-The `.desktop` file (`org.devlog.krunner.desktop`) must be installed to
+The `.desktop` file (`org.chadnorvell.devlog.krunner.desktop`) must be installed to
 `~/.local/share/krunner/dbusplugins/` for KRunner to discover it. Key metadata
 entries:
 
-- `X-Plasma-DBusRunner-Service=org.devlog.krunner*` — The trailing wildcard
+- `X-Plasma-DBusRunner-Service=org.chadnorvell.devlog.krunner*` — The trailing wildcard
   causes KRunner to dynamically discover the service by scanning the session
   bus for matching names. Without the wildcard, KRunner treats the service as
   D-Bus-activatable, which requires a separate D-Bus `.service` file. The
@@ -1282,7 +1282,7 @@ devlog/
 ├── generate.go            # Summary generation: summarizer invocation, prompt assembly
 ├── claudecode.go          # Claude Code session log parsing and preprocessing
 ├── krunner.go             # D-Bus KRunner integration (optional)
-├── org.devlog.krunner.desktop  # KRunner plugin descriptor (install to dbusplugins/)
+├── org.chadnorvell.devlog.krunner.desktop  # KRunner plugin descriptor (install to dbusplugins/)
 ├── flake.nix
 ├── go.mod
 ├── go.sum

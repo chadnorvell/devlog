@@ -38,7 +38,7 @@ plugin, allowing you to log notes from anywhere on your desktop by typing
 
    ```sh
    mkdir -p ~/.local/share/krunner/dbusplugins
-   cp org.devlog.krunner.desktop ~/.local/share/krunner/dbusplugins/
+   cp org.chadnorvell.devlog.krunner.desktop ~/.local/share/krunner/dbusplugins/
    ```
 
 2. Restart KRunner so it picks up the new plugin:
