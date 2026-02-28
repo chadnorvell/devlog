@@ -14,9 +14,15 @@ import (
 func cmdNote() {
 	fs := flag.NewFlagSet("note", flag.ExitOnError)
 	msg := fs.String("m", "", "note message")
+	gui := fs.Bool("g", false, "use GUI dialog for input")
 	code := fs.String("c", "", "code block")
 	proj := fs.String("p", "", "project name")
 	fs.Parse(os.Args[1:])
+
+	if *msg != "" && *gui {
+		fmt.Fprintln(os.Stderr, "Error: -m and -g are mutually exclusive")
+		os.Exit(1)
+	}
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -47,6 +53,16 @@ func cmdNote() {
 	var msgText string
 	if *msg != "" {
 		msgText = *msg
+	} else if *gui {
+		msgText, err = kdialogInput(projectName)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if msgText == "" {
+			fmt.Println("Note cancelled (empty message)")
+			return
+		}
 	} else {
 		msgText, err = editNote(cfg, projectName)
 		if err != nil {
@@ -141,6 +157,23 @@ func writeNote(notesFile, text, project string) error {
 		return fmt.Errorf("writing note: %w", err)
 	}
 	return nil
+}
+
+func kdialogInput(project string) (string, error) {
+	displayProject := project
+	if displayProject == "" {
+		displayProject = "N/A"
+	}
+	cmd := exec.Command("kdialog", "--textinputbox", fmt.Sprintf("Enter note for %s", displayProject))
+	out, err := cmd.Output()
+	if err != nil {
+		// Exit status 1 means the user pushed Cancel or hit Escape.
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func cmdGen() {

@@ -57,9 +57,10 @@ The tool accomplishes this by:
   `devlog` executable.
 
 - No external dependencies at runtime other than `git` and an AI CLI (like
-  `claude` or `gemini-cli`). The KRunner integration (section 2.3) optionally
-  requires a D-Bus session bus and KDialog; if either is unavailable, the
-  feature is silently disabled and all other functionality works normally.
+  `claude` or `gemini-cli`). The `-g` flag and KRunner integration (section 2.3)
+  optionally require KDialog and a D-Bus session bus; if either is unavailable,
+  those features will return an error or be silently disabled, while all other
+  functionality works normally.
 
 ## 2. Architecture
 
@@ -78,7 +79,7 @@ The system has two process roles compiled into a single binary:
 
 Some commands do not require a running server:
 
-- `devlog -m <message>` / `devlog` (log a note): Writes directly to the raw
+- `devlog -m <message>` / `devlog -g` / `devlog` (log a note): Writes directly to the raw
   data files. Does not contact the server.
 
 - `devlog gen`: Reads raw data files and invokes the configured AI
@@ -143,9 +144,8 @@ project. The D-Bus service provides auto-completion of known projects, such
 that partial hashtag entry provides candidate projects for selection in
 KRunner. If the hashtag is followed by whitespace and then note content,
 submitting/running the action will call `devlog -m <content> -p <project>`. If
-there is no non-whitespace content other than the hashtag, a KDialog will be
-launched with a multi-line text box to capture longer input. When that dialog
-is submitted, the action will call `devlog -m <content> -p <project>`.
+there is no non-whitespace content other than the hashtag, the action will call
+`devlog -g -p <project>` to launch a GUI dialog to capture longer input.
 
 - Destination path: `/krunner`
 - Destination name: `org.chadnorvell.devlog.krunner`
@@ -169,7 +169,7 @@ is submitted, the action will call `devlog -m <content> -p <project>`.
 
   - Is triggered when the user submits the KRunner input
 
-  - Calls `devlog -m <content> -p <project>`
+  - Calls `devlog -m <content> -p <project>` (or `devlog -g -p <project>`)
 
 #### KRunner .desktop file
 
@@ -267,7 +267,7 @@ term_path = "<raw_dir>/<date>/term-<project>*.log"
 # Interval in seconds between git diff snapshots. Default: 300 (5 minutes).
 snapshot_interval = 300
 
-# Editor to use for `devlog` (no -m). Falls back to $EDITOR, then "vi".
+# Editor to use for `devlog` (no -m or -g). Falls back to $EDITOR, then "vi".
 editor = ""
 
 # AI summarizer command. Change this to use other AI tools.
@@ -847,7 +847,7 @@ coverage. Data collection for unwatched projects is best-effort.
 
 | Data source          | Watched projects | Unwatched projects                        |
 |----------------------|------------------|-------------------------------------------|
-| Notes/snippets       | Yes              | Yes (via `devlog -m -p <project>`)        |
+| Notes/snippets       | Yes              | Yes (via `devlog -m -p <project>` or `-g`) |
 | Git diffs            | Yes (auto)       | No (server collects only watched repos)   |
 | Terminal logs        | Yes              | Only if the project is also discovered through another source (e.g., notes) |
 | Claude Code sessions | Yes              | No (requires repo path from watch list)   |
@@ -1000,7 +1000,7 @@ heading of the date, followed by second-level headings for each project.
 The `devlog` command is the single entry point. Behavior is determined by the
 subcommand (or lack thereof).
 
-### 6.1 `devlog [-m <message>] [-c <code>] [-p <project>]` (no subcommand)
+### 6.1 `devlog [-g | -m <message>] [-c <code>] [-p <project>]` (no subcommand)
 
 Log a note for the current project.
 
@@ -1016,7 +1016,10 @@ Log a note for the current project.
    without a project hashtag.
 2. Determine today's date (`YYYY-MM-DD`).
 3. If `-m <message>` is provided, use `<message>` as the note text.
-4. If `-m` is not provided, create a temporary file pre-filled with:
+4. If the `-g` flag is set, launch KDialog and use the submitted text as the
+   message. This is mutually exclusive with `-m`, so if both are provided,
+   print an error and exit 1.
+5. If neither `-m` nor `-g` is provided, create a temporary file pre-filled with:
    ```
    # Project: <project>
    # Enter your note below. Lines starting with # are ignored.
@@ -1026,12 +1029,12 @@ Log a note for the current project.
    to the configured editor, then `vi`). When the editor exits, read the file,
    strip lines starting with `#`, and trim whitespace. If the result is empty,
    print "Note cancelled (empty message)" and exit 0.
-5. If `-c` is provided, after the message add a newline and the content
+6. If `-c` is provided, after the message add a newline and the content
    wrapped in Markdown code block delimiters.
-6. Resolve the `notes_path` template for today's date. Append the note to the
+7. Resolve the `notes_path` template for today's date. Append the note to the
    resulting path using the format defined in section 4.2. Create parent
    directories if needed.
-7. If a project was determined, print "Logged note for <project>." If no
+8. If a project was determined, print "Logged note for <project>." If no
    project, print "Logged note."
 
 **Does not require a running server.**
@@ -1316,14 +1319,14 @@ func main() {
         cmdStatus()
     default:
         // Not a known subcommand: treat as note command
-        // (handles `devlog -m "msg"`)
+        // (handles `devlog -m "msg"` and `devlog -g`)
         cmdNote()
     }
 }
 ```
 
-This dispatch logic means `devlog -m "msg"` hits the `default` case (since
-`-m` is not a subcommand), which calls `cmdNote()` and parses `-m` with its
+This dispatch logic means `devlog -m "msg"` and `devlog -g` hit the `default` case (since
+they are not subcommands), which calls `cmdNote()` and parses the flags with its
 own `flag.FlagSet`. Keep all files in the `main` package — there's no need for
 `internal/` sub-packages at this scale.
 

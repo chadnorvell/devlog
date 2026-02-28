@@ -1,9 +1,6 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 )
@@ -136,47 +133,6 @@ func TestKRunnerMatch(t *testing.T) {
 			t.Errorf("got %d matches, want 0", len(matches))
 		}
 	})
-}
-
-func TestKRunnerRunWithContent(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("DEVLOG_RAW_DIR", tmpDir)
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-
-	s := &Server{
-		watched: []WatchEntry{
-			{Path: "/home/user/dev/devlog", Name: "devlog"},
-		},
-	}
-	kr := &KRunner{server: s}
-
-	matchID := encodeMatchID("devlog", "test note from krunner")
-	dbusErr := kr.Run(matchID, "")
-	if dbusErr != nil {
-		t.Fatalf("Run returned error: %v", dbusErr)
-	}
-
-	// Find the notes file that was written
-	entries, err := os.ReadDir(tmpDir)
-	if err != nil {
-		t.Fatalf("reading tmpDir: %v", err)
-	}
-	if len(entries) == 0 {
-		t.Fatal("no date directory created")
-	}
-
-	dateDir := filepath.Join(tmpDir, entries[0].Name())
-	notesPath := filepath.Join(dateDir, "notes.md")
-	data, err := os.ReadFile(notesPath)
-	if err != nil {
-		t.Fatalf("reading notes file: %v", err)
-	}
-	if !strings.Contains(string(data), "test note from krunner") {
-		t.Errorf("notes file doesn't contain expected content: %s", data)
-	}
-	if !strings.Contains(string(data), "#devlog") {
-		t.Errorf("notes file should contain project hashtag: %s", data)
-	}
 }
 
 func TestKRunnerAvailableNoKdialog(t *testing.T) {

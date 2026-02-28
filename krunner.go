@@ -1,11 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
@@ -121,30 +120,25 @@ func (k *KRunner) Run(matchID string, actionID string) *dbus.Error {
 		return nil
 	}
 
-	if strings.TrimSpace(content) == "" {
-		var err error
-		content, err = kdialogInput(project)
-		if err != nil {
-			log.Printf("krunner: kdialog error: %v", err)
-			return nil
-		}
-		if strings.TrimSpace(content) == "" {
-			return nil
-		}
-	}
-
-	cfg, err := loadConfig()
+	executable, err := os.Executable()
 	if err != nil {
-		log.Printf("krunner: config error: %v", err)
+		log.Printf("krunner: executable err: %v", err)
 		return nil
 	}
 
-	today := time.Now().Format("2006-01-02")
-	notesFile := resolveNotesPath(cfg, today)
-
-	if err := writeNote(notesFile, content, project); err != nil {
-		log.Printf("krunner: write error: %v", err)
+	var cmd *exec.Cmd
+	if strings.TrimSpace(content) == "" {
+		cmd = exec.Command(executable, "-g", "-p", project)
+	} else {
+		cmd = exec.Command(executable, "-m", content, "-p", project)
 	}
+
+	if err := cmd.Start(); err != nil {
+		log.Printf("krunner: start command err: %v", err)
+		return nil
+	}
+	go cmd.Wait()
+	log.Printf("krunner: launched `%s`", strings.Join(cmd.Args, " "))
 
 	return nil
 }
@@ -182,15 +176,6 @@ func decodeMatchID(matchID string) (project, content string) {
 		return matchID, ""
 	}
 	return matchID[:idx], matchID[idx+1:]
-}
-
-func kdialogInput(project string) (string, error) {
-	cmd := exec.Command("kdialog", "--textinputbox", fmt.Sprintf("Enter note for %s", project))
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
 }
 
 const krunnerIntrospectXML = `
