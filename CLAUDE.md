@@ -1,27 +1,11 @@
 # CLAUDE.md
 
-## Build environment
-
-This project uses a Nix flake for development dependencies. You must activate the Nix shell before running any Go commands:
-
-```sh
-nix develop --command <cmd>
-```
-
-Examples:
-
-```sh
-nix develop --command go build ./...
-nix develop --command go test ./...
-nix develop --command go vet ./...
-```
-
 ## Build and test
 
 ```sh
-nix develop --command go build ./...   # compile
-nix develop --command go test ./...    # run all tests
-nix develop --command go vet ./...     # static analysis
+go build ./...   # compile
+go test ./...    # run all tests
+go vet ./...     # static analysis
 ```
 
 All three must pass cleanly before submitting changes.
